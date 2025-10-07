@@ -13,6 +13,7 @@ Esta versión incluye una interfaz completamente rediseñada con:
 - 📱 **Responsive**: Diseño que se adapta a diferentes tamaños
 - 🌈 **Colores Alternados**: Filas con colores para mejor lectura
 - ⚠️ **Alertas Visuales**: Productos con stock bajo resaltados en rojo
+<img width="1679" height="1000" alt="image" src="https://github.com/user-attachments/assets/26febc78-bea0-4925-8c38-eb38289b4e6f" />
 
 ## 🚀 Características
 
