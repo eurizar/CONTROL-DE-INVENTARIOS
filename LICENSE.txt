@@ -1,0 +1,95 @@
+═══════════════════════════════════════════════════════════════════════════
+                        LICENCIA DE SOFTWARE PROPIETARIO
+═══════════════════════════════════════════════════════════════════════════
+
+Sistema de Control de Inventarios v2.0
+
+© 2025 Elizandro Urizar. Todos los derechos reservados.
+
+
+AUTOR:
+------
+Elizandro Urizar
+Email: elizandrou@outlook.com
+
+
+TÉRMINOS DE USO:
+----------------
+
+Este software es propiedad exclusiva de Elizandro Urizar y está protegido
+por las leyes de derechos de autor y propiedad intelectual.
+
+
+USO PERSONAL GRATUITO:
+----------------------
+✓ Uso individual sin fines de lucro
+✓ Uso en computadora personal
+✓ Modificación para uso personal (sin redistribución)
+
+
+USO COMERCIAL - REQUIERE LICENCIA PAGADA:
+------------------------------------------
+Para usar este software en un negocio o entidad comercial, debe adquirir
+una licencia comercial.
+
+La licencia comercial incluye:
+✓ Uso en entorno de negocio
+✓ Gestión de inventarios comerciales
+✓ Soporte del desarrollador (según modalidad)
+✓ Actualizaciones (según modalidad)
+
+Tipos de licencia disponibles:
+- Licencia por negocio individual
+- Licencia por número de usuarios
+- Licencia personalizada según necesidades
+
+
+USO PROHIBIDO SIN LICENCIA:
+----------------------------
+✗ Uso comercial sin licencia adquirida
+✗ Reventa o redistribución del software
+✗ Uso en múltiples negocios con una sola licencia
+✗ Modificación y distribución como producto propio
+✗ Eliminación de avisos de copyright
+✗ Ingeniería inversa con fines comerciales
+✗ Sublicenciamiento o alquiler del software
+
+
+ADQUISICIÓN DE LICENCIA COMERCIAL:
+-----------------------------------
+Para adquirir una licencia comercial o solicitar presupuesto:
+
+Contacto:
+  Elizandro Urizar
+  Email: elizandrou@outlook.com
+
+Se ofrecen planes accesibles para pequeños y medianos negocios.
+Consulte por opciones de pago y modalidades disponibles.
+
+
+DESCARGO DE RESPONSABILIDAD:
+-----------------------------
+Este software se proporciona "TAL CUAL", sin garantía de ningún tipo,
+expresa o implícita, incluyendo pero no limitándose a garantías de
+comerciabilidad, idoneidad para un propósito particular y no infracción.
+
+En ningún caso el autor será responsable de ningún reclamo, daños u otra
+responsabilidad, ya sea en una acción de contrato, agravio o de otro tipo,
+que surja de, fuera de o en conexión con el software o el uso u otros
+tratos en el software.
+
+
+PROTECCIÓN LEGAL:
+-----------------
+Toda copia, modificación, uso comercial no autorizado o distribución de
+este software sin licencia válida constituye una violación de los derechos
+de autor y está sujeto a acciones legales según las leyes aplicables.
+
+
+FECHA DE EMISIÓN: Octubre 2025
+VERSIÓN DE LA LICENCIA: 2.0
+
+
+═══════════════════════════════════════════════════════════════════════════
+  ESTA LICENCIA DEBE PERMANECER INTACTA EN TODAS LAS COPIAS DEL SOFTWARE
+═══════════════════════════════════════════════════════════════════════════
