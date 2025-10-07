@@ -15,7 +15,7 @@ env/
 
 # PyInstaller
 build/
-*.spec
+# *.spec  # Comentado para permitir subir el .spec configurado
 
 # Base de datos (opcional - descomentar si NO quieres subir la BD)
 # data/inventarios.db
