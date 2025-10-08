@@ -18,6 +18,18 @@ import os
 import sys
 import locale
 
+# Función para obtener la ruta correcta de recursos (PyInstaller compatible)
+def resource_path(relative_path):
+    """Obtiene la ruta absoluta al recurso, funciona para dev y para PyInstaller"""
+    try:
+        # PyInstaller crea una carpeta temporal y guarda la ruta en _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        # Si no es PyInstaller, usar la ruta del directorio actual
+        base_path = os.path.abspath(".")
+    
+    return os.path.join(base_path, relative_path)
+
 # Configurar locale en español para los calendarios
 try:
     locale.setlocale(locale.LC_TIME, 'es_ES.UTF-8')
@@ -55,8 +67,11 @@ class MainWindow:
         
         # Configurar icono
         try:
-            self.root.iconbitmap("inventario.ico")
-        except:
+            icon_path = resource_path("inventario.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"No se pudo cargar el icono: {e}")
             pass  # Si no encuentra el icono, continuar sin él
         
         # Configurar estilo
@@ -207,7 +222,12 @@ class MainWindow:
     def agregar_icono(self, ventana):
         """Agrega el icono a una ventana"""
         try:
-            ventana.iconbitmap("inventario.ico")
+            icon_path = resource_path("inventario.ico")
+            if os.path.exists(icon_path):
+                ventana.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"No se pudo cargar el icono: {e}")
+            pass
         except:
             pass
     
@@ -2494,12 +2514,6 @@ class MainWindow:
             
             dialog.grab_set()
             self.agregar_icono(dialog)
-            
-            # Agregar icono
-            try:
-                dialog.iconbitmap("inventario.ico")
-            except:
-                pass
             
             self.centrar_ventana(dialog)
             

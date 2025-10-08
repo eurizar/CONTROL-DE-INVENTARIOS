@@ -45,3 +45,22 @@ dist/
 *.tmp
 *.bak
 *.cache
+
+# Archivos de documentación temporal de Copilot
+ACTUALIZACION_*.md
+ANALISIS_*.md
+COMPARACION_*.md
+GESTION_*.md
+IMPLEMENTACION_*.md
+INSTRUCCIONES.md
+MEJORAS_*.md
+RESUMEN_*.md
+SOLUCION_*.md
+
+# Archivos de prueba
+test_*.py
+prueba_*.py
+crear_datos_ejemplo.py
+
+# Spec antiguo (solo usar Sistema_Inventarios.spec)
+inventario.spec
