@@ -1886,6 +1886,84 @@ class MainWindow:
         # Separador
         tb.Separator(self.config_frame, orient='horizontal').pack(fill='x', padx=15, pady=10)
         
+        # Frame para OneDrive
+        onedrive_frame = tb.Labelframe(
+            self.config_frame, 
+            text="☁️ Sincronización con OneDrive", 
+            padding=20,
+            bootstyle="secondary"
+        )
+        onedrive_frame.pack(fill='x', padx=15, pady=(0, 15))
+        
+        # Información sobre OneDrive
+        info_onedrive = tb.Label(
+            onedrive_frame, 
+            text="Configura la base de datos en OneDrive para sincronizar entre múltiples computadoras.\n"
+                 "⚠️ Nota: Asegúrate de que OneDrive esté sincronizado antes de usar el sistema.",
+            font=('Segoe UI', 9),
+            bootstyle="info",
+            wraplength=700
+        )
+        info_onedrive.pack(anchor='w', pady=(0, 15))
+        
+        # Detectar OneDrive
+        onedrive_path = Settings.detect_onedrive_path()
+        if onedrive_path:
+            status_text = f"✅ OneDrive detectado: {onedrive_path}"
+            status_style = "success"
+        else:
+            status_text = "❌ OneDrive no detectado en este equipo"
+            status_style = "danger"
+        
+        tb.Label(
+            onedrive_frame, 
+            text=status_text,
+            font=('Segoe UI', 9, 'bold'),
+            bootstyle=status_style
+        ).pack(anchor='w', pady=(0, 15))
+        
+        # Botones de OneDrive
+        buttons_onedrive = tb.Frame(onedrive_frame)
+        buttons_onedrive.pack(fill='x', pady=10)
+        
+        tb.Button(
+            buttons_onedrive, 
+            text="☁️ Configurar BD en OneDrive", 
+            command=self.configurar_onedrive,
+            bootstyle="primary",
+            width=30
+        ).pack(side='left', padx=5)
+        
+        tb.Button(
+            buttons_onedrive, 
+            text="📂 Seleccionar Ubicación Manual", 
+            command=self.seleccionar_ubicacion_manual,
+            bootstyle="info",
+            width=30
+        ).pack(side='left', padx=5)
+        
+        # Estado actual
+        current_db = Settings.get_db_path()
+        is_cloud = Settings.is_using_cloud_storage()
+        
+        if is_cloud:
+            estado_text = f"🌐 Usando almacenamiento en la nube\nRuta: {current_db}"
+            estado_style = "success"
+        else:
+            estado_text = f"💻 Usando almacenamiento local\nRuta: {current_db}"
+            estado_style = "secondary"
+        
+        self.estado_cloud_label = tb.Label(
+            onedrive_frame, 
+            text=estado_text,
+            font=('Segoe UI', 9),
+            bootstyle=estado_style
+        )
+        self.estado_cloud_label.pack(anchor='w', pady=(15, 0))
+        
+        # Separador
+        tb.Separator(self.config_frame, orient='horizontal').pack(fill='x', padx=15, pady=10)
+        
         # Frame para temas
         theme_frame = tb.Labelframe(
             self.config_frame, 
@@ -4356,6 +4434,170 @@ class MainWindow:
                 self.refresh_all_data()
             else:
                 messagebox.showerror("Error", mensaje)
+    
+    def configurar_onedrive(self):
+        """Configura la base de datos en OneDrive automáticamente"""
+        onedrive_path = Settings.detect_onedrive_path()
+        
+        if not onedrive_path:
+            messagebox.showerror(
+                "Error", 
+                "No se pudo detectar OneDrive en este equipo.\n\n"
+                "Asegúrate de que OneDrive esté instalado y sincronizado.\n"
+                "Usa 'Seleccionar Ubicación Manual' si lo prefieres."
+            )
+            return
+        
+        # Crear carpeta para el sistema en OneDrive
+        app_folder = os.path.join(onedrive_path, "Sistema_Inventarios")
+        
+        try:
+            os.makedirs(app_folder, exist_ok=True)
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo crear la carpeta en OneDrive:\n{str(e)}")
+            return
+        
+        # Ruta de la nueva BD en OneDrive
+        nueva_db_path = os.path.join(app_folder, "inventarios.db")
+        
+        # Verificar si ya existe una BD en OneDrive
+        if os.path.exists(nueva_db_path):
+            respuesta = messagebox.askyesno(
+                "Base de Datos Existente",
+                f"Se encontró una base de datos existente en OneDrive:\n{nueva_db_path}\n\n"
+                "¿Deseas usar esta base de datos?\n\n"
+                "SÍ = Usar la BD existente en OneDrive\n"
+                "NO = Copiar la BD actual a OneDrive (sobrescribirá la existente)"
+            )
+            
+            if not respuesta:
+                # Copiar BD actual a OneDrive
+                try:
+                    import shutil
+                    shutil.copy2(self.controller.db.db_path, nueva_db_path)
+                    messagebox.showinfo("Éxito", "Base de datos copiada a OneDrive correctamente")
+                except Exception as e:
+                    messagebox.showerror("Error", f"No se pudo copiar la base de datos:\n{str(e)}")
+                    return
+        else:
+            # Preguntar si copiar la BD actual
+            if os.path.exists(self.controller.db.db_path):
+                copiar = messagebox.askyesno(
+                    "Copiar Base de Datos",
+                    "¿Deseas copiar tu base de datos actual a OneDrive?\n\n"
+                    "SÍ = Copiar datos existentes\n"
+                    "NO = Crear nueva base de datos vacía en OneDrive"
+                )
+                
+                if copiar:
+                    try:
+                        import shutil
+                        shutil.copy2(self.controller.db.db_path, nueva_db_path)
+                    except Exception as e:
+                        messagebox.showerror("Error", f"No se pudo copiar la base de datos:\n{str(e)}")
+                        return
+        
+        # Cambiar a la nueva ruta
+        exito, mensaje = self.controller.cambiar_base_datos(nueva_db_path)
+        
+        if exito:
+            Settings.set_db_path(nueva_db_path)
+            Settings.set_cloud_storage(True)
+            
+            messagebox.showinfo(
+                "¡Éxito!", 
+                f"Base de datos configurada en OneDrive correctamente.\n\n"
+                f"Ruta: {nueva_db_path}\n\n"
+                f"Ahora puedes instalar el programa en otras computadoras\n"
+                f"y usar esta misma ruta para compartir los datos."
+            )
+            
+            # Actualizar interfaz
+            self.db_actual_label.config(text=nueva_db_path)
+            self.actualizar_estado_cloud()
+            self.refresh_all_data()
+        else:
+            messagebox.showerror("Error", mensaje)
+    
+    def seleccionar_ubicacion_manual(self):
+        """Permite seleccionar manualmente la ubicación de la BD"""
+        # Preguntar si quiere crear nueva o seleccionar existente
+        opciones = messagebox.askyesnocancel(
+            "Seleccionar Base de Datos",
+            "¿Qué deseas hacer?\n\n"
+            "SÍ = Seleccionar base de datos existente\n"
+            "NO = Crear nueva base de datos\n"
+            "CANCELAR = Volver"
+        )
+        
+        if opciones is None:  # Cancelar
+            return
+        elif opciones:  # Seleccionar existente
+            archivo = filedialog.askopenfilename(
+                title="Seleccionar Base de Datos",
+                filetypes=[("Base de datos SQLite", "*.db"), ("Todos los archivos", "*.*")],
+                initialdir=Settings.detect_onedrive_path() or os.path.expanduser("~")
+            )
+        else:  # Crear nueva
+            archivo = filedialog.asksaveasfilename(
+                title="Nueva Base de Datos",
+                defaultextension=".db",
+                initialfile="inventarios.db",
+                filetypes=[("Base de datos SQLite", "*.db"), ("Todos los archivos", "*.*")],
+                initialdir=Settings.detect_onedrive_path() or os.path.expanduser("~")
+            )
+        
+        if archivo:
+            # Si la nueva ubicación no tiene BD, copiar la actual
+            if not os.path.exists(archivo):
+                copiar = messagebox.askyesno(
+                    "Copiar Datos",
+                    "¿Deseas copiar tu base de datos actual a esta ubicación?\n\n"
+                    "SÍ = Copiar datos existentes\n"
+                    "NO = Crear base de datos vacía"
+                )
+                
+                if copiar and os.path.exists(self.controller.db.db_path):
+                    try:
+                        import shutil
+                        shutil.copy2(self.controller.db.db_path, archivo)
+                    except Exception as e:
+                        messagebox.showerror("Error", f"No se pudo copiar:\n{str(e)}")
+                        return
+            
+            # Cambiar a la nueva ubicación
+            exito, mensaje = self.controller.cambiar_base_datos(archivo)
+            
+            if exito:
+                Settings.set_db_path(archivo)
+                
+                # Detectar si está en la nube
+                es_nube = "onedrive" in archivo.lower() or "google drive" in archivo.lower() or "dropbox" in archivo.lower()
+                Settings.set_cloud_storage(es_nube)
+                
+                messagebox.showinfo("Éxito", f"Base de datos configurada correctamente:\n{archivo}")
+                
+                # Actualizar interfaz
+                self.db_actual_label.config(text=archivo)
+                self.actualizar_estado_cloud()
+                self.refresh_all_data()
+            else:
+                messagebox.showerror("Error", mensaje)
+    
+    def actualizar_estado_cloud(self):
+        """Actualiza el label de estado de la nube"""
+        current_db = Settings.get_db_path()
+        is_cloud = Settings.is_using_cloud_storage()
+        
+        if is_cloud:
+            estado_text = f"🌐 Usando almacenamiento en la nube\nRuta: {current_db}"
+            estado_style = "success"
+        else:
+            estado_text = f"💻 Usando almacenamiento local\nRuta: {current_db}"
+            estado_style = "secondary"
+        
+        if hasattr(self, 'estado_cloud_label'):
+            self.estado_cloud_label.config(text=estado_text, bootstyle=estado_style)
     
     def exportar_reporte_general(self):
         """Exporta el reporte general completo a Excel"""

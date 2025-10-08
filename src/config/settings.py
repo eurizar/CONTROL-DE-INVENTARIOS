@@ -4,13 +4,16 @@ Maneja la configuración de la aplicación, incluyendo el tema seleccionado.
 """
 import json
 import os
+import sys
 
 class Settings:
     """Clase para manejar la configuración de la aplicación"""
     
     CONFIG_FILE = "data/config.json"
     DEFAULT_CONFIG = {
-        "theme": "superhero"
+        "theme": "superhero",
+        "db_path": "data/inventarios.db",
+        "use_cloud_storage": False
     }
     
     @classmethod
@@ -61,3 +64,67 @@ class Settings:
         config = cls.load_config()
         config["theme"] = theme_name
         return cls.save_config(config)
+    
+    @classmethod
+    def get_db_path(cls):
+        """Obtiene la ruta de la base de datos"""
+        config = cls.load_config()
+        return config.get("db_path", cls.DEFAULT_CONFIG["db_path"])
+    
+    @classmethod
+    def set_db_path(cls, db_path):
+        """Guarda la ruta de la base de datos"""
+        config = cls.load_config()
+        config["db_path"] = db_path
+        return cls.save_config(config)
+    
+    @classmethod
+    def is_using_cloud_storage(cls):
+        """Verifica si está usando almacenamiento en la nube"""
+        config = cls.load_config()
+        return config.get("use_cloud_storage", False)
+    
+    @classmethod
+    def set_cloud_storage(cls, use_cloud):
+        """Configura el uso de almacenamiento en la nube"""
+        config = cls.load_config()
+        config["use_cloud_storage"] = use_cloud
+        return cls.save_config(config)
+    
+    @classmethod
+    def detect_onedrive_path(cls):
+        """Detecta automáticamente la ruta de OneDrive"""
+        # Buscar en variables de entorno de Windows
+        onedrive_paths = [
+            os.environ.get('OneDrive'),
+            os.environ.get('OneDriveCommercial'),
+            os.environ.get('OneDriveConsumer'),
+        ]
+        
+        # Filtrar rutas válidas
+        for path in onedrive_paths:
+            if path and os.path.exists(path):
+                return path
+        
+        # Rutas comunes de OneDrive
+        username = os.environ.get('USERNAME', '')
+        common_paths = [
+            f"C:\\Users\\{username}\\OneDrive",
+            f"C:\\Users\\{username}\\OneDrive - ",  # OneDrive empresarial
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path):
+                return path
+        
+        return None
+    
+    @classmethod
+    def get_suggested_onedrive_db_path(cls):
+        """Sugiere una ruta de BD en OneDrive"""
+        onedrive = cls.detect_onedrive_path()
+        if onedrive:
+            # Crear carpeta para el sistema
+            app_folder = os.path.join(onedrive, "Sistema_Inventarios")
+            return os.path.join(app_folder, "inventarios.db")
+        return None

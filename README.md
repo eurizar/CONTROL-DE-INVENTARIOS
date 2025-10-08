@@ -46,11 +46,22 @@ Esta versión incluye una interfaz completamente rediseñada con:
 
 ### Gestión de Base de Datos
 - ✅ Base de datos SQLite local
+- ✅ **☁️ Sincronización con OneDrive** (¡NUEVO!)
 - ✅ Posibilidad de cargar/cambiar base de datos
+- ✅ Uso compartido entre múltiples computadoras
 - ✅ Exportación de reportes
 - ✅ Backup automático
 - ✅ **Cambio de temas en tiempo real**
 - ✅ **Interfaz personalizable**
+
+### ☁️ Sincronización Multi-Computadora (¡NUEVO!)
+- ✅ **Configuración automática con OneDrive**
+- ✅ **Detección automática de la carpeta OneDrive**
+- ✅ **Sincronización en tiempo real** entre computadoras
+- ✅ **Ubicación manual** compatible con Google Drive/Dropbox
+- ✅ **Indicadores visuales** del estado de sincronización
+- ✅ **Respaldo en la nube** automático
+- 📖 [**Ver Guía Completa de OneDrive**](GUIA_ONEDRIVE.md)
 
 ## 🎨 Temas Disponibles
 

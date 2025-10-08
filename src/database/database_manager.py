@@ -7,7 +7,16 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
 class DatabaseManager:
-    def __init__(self, db_path: str = "data/inventarios.db"):
+    def __init__(self, db_path: str = None):
+        """
+        Inicializa el gestor de base de datos.
+        Si db_path es None, usa la ruta configurada en Settings.
+        """
+        if db_path is None:
+            # Importar Settings aquí para evitar importación circular
+            from src.config.settings import Settings
+            db_path = Settings.get_db_path()
+        
         self.db_path = db_path
         self.init_database()
     
