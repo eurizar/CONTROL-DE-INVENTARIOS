@@ -48,6 +48,50 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from src.controllers.inventario_controller import InventarioController
 from src.config.settings import Settings
 
+class ToolTip:
+    """Clase para crear tooltips personalizados"""
+    def __init__(self, widget):
+        self.widget = widget
+        self.tipwindow = None
+        self.id = None
+        self.x = self.y = 0
+
+    def showtip(self, text, x, y):
+        """Muestra el tooltip en las coordenadas especificadas"""
+        self.text = text
+        if self.tipwindow or not self.text:
+            return
+        
+        # Crear ventana del tooltip
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)  # Sin bordes de ventana
+        tw.wm_geometry(f"+{x}+{y}")
+        
+        # Frame con bordes y estilo
+        frame = tk.Frame(tw, background="#ffffe0", relief='solid', borderwidth=1)
+        frame.pack()
+        
+        label = tk.Label(
+            frame, 
+            text=self.text, 
+            justify='left',
+            background="#ffffe0", 
+            foreground="#000000",
+            relief='flat', 
+            borderwidth=0,
+            font=('Segoe UI', 9),
+            padx=10,
+            pady=8
+        )
+        label.pack()
+
+    def hidetip(self):
+        """Oculta el tooltip"""
+        tw = self.tipwindow
+        self.tipwindow = None
+        if tw:
+            tw.destroy()
+
 class MainWindow:
     def __init__(self):
         # Cargar el tema guardado
@@ -160,6 +204,17 @@ class MainWindow:
         self.compra_proveedor_id = None
         self.venta_producto_id = None
         self.venta_cliente_id = None
+        
+        # Variables para guardar datos del generador SKU
+        self.sku_data = {
+            'nombre': '',
+            'categoria': '',
+            'marca': '',
+            'color': '',
+            'tamaño': '',
+            'dibujo': '',
+            'cod_color': ''
+        }
         
         # Banderas para lazy loading (optimización)
         self.tabs_loaded = {
@@ -575,12 +630,26 @@ class MainWindow:
             font=('Segoe UI', 10, 'bold')
         ).grid(row=0, column=0, sticky='w', padx=5, pady=5)
         
-        tb.Entry(
-            form_frame, 
+        codigo_frame = tb.Frame(form_frame)
+        codigo_frame.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
+        
+        self.codigo_entry = tb.Entry(
+            codigo_frame, 
             textvariable=self.producto_codigo, 
-            width=15,
-            font=('Segoe UI', 10)
-        ).grid(row=0, column=1, padx=5, pady=5, sticky='ew')
+            width=32,
+            font=('Segoe UI', 11, 'bold'),
+            state='disabled',
+            cursor='arrow'
+        )
+        self.codigo_entry.pack(side='left', padx=(0, 8))
+        
+        tb.Button(
+            codigo_frame,
+            text="🏷️ Generar Código SKU",
+            command=self.abrir_generador_sku,
+            bootstyle="info",
+            width=19
+        ).pack(side='left')
         
         tb.Label(
             form_frame, 
@@ -817,7 +886,7 @@ class MainWindow:
         tree_frame = tb.Frame(list_frame)
         tree_frame.pack(fill='both', expand=True)
         
-        columns = ('ID', 'Código', 'Nombre', 'Categoría', 'Precio Compra', 'Ganancia %', 'Ganancia Q', 'Precio Venta', 'Stock', 'Estado')
+        columns = ('ID', 'Código', 'Nombre', 'Categoría', 'Marca', 'Color', 'Tamaño', 'Precio Compra', 'Ganancia %', 'Ganancia Q', 'Precio Venta', 'Stock', 'Estado')
         self.productos_tree = tb.Treeview(
             tree_frame, 
             columns=columns, 
@@ -826,7 +895,7 @@ class MainWindow:
         )
         
         # Configurar columnas con mejor ancho
-        column_widths = {'ID': 50, 'Código': 90, 'Nombre': 200, 'Categoría': 120, 'Precio Compra': 110, 'Ganancia %': 90, 'Ganancia Q': 100, 'Precio Venta': 110, 'Stock': 70, 'Estado': 80}
+        column_widths = {'ID': 50, 'Código': 90, 'Nombre': 200, 'Categoría': 120, 'Marca': 80, 'Color': 80, 'Tamaño': 80, 'Precio Compra': 110, 'Ganancia %': 90, 'Ganancia Q': 100, 'Precio Venta': 110, 'Stock': 70, 'Estado': 80}
         for col in columns:
             self.productos_tree.heading(col, text=col, command=lambda c=col: self.sort_treeview(self.productos_tree, c, False))
             self.productos_tree.column(col, width=column_widths[col], anchor='center' if col not in ['Nombre', 'Código', 'Categoría'] else 'w')
@@ -845,6 +914,11 @@ class MainWindow:
         
         # Bind para seleccionar producto
         self.productos_tree.bind('<Double-1>', self.seleccionar_producto)
+        
+        # Bind para tooltip en hover sobre código SKU
+        self.productos_tree.bind('<Motion>', self.mostrar_tooltip_sku)
+        self.productos_tree.bind('<Leave>', self.ocultar_tooltip_sku)
+        self.tooltip_sku = None
         
         # Agregar colores alternados a las filas
         self.productos_tree.tag_configure('evenrow', background='#f0f0f0')
@@ -1830,17 +1904,28 @@ class MainWindow:
     
     def create_configuracion_tab(self):
         """Crea la pestaña de configuración"""
+        # Frame principal sin scroll general
         self.config_frame = tb.Frame(self.notebook, bootstyle="light")
         self.notebook.add(self.config_frame, text="⚙️ Configuración")
         
+        # ==================== DISEÑO EN DOS COLUMNAS ====================
+        
+        # Frame contenedor para las dos columnas
+        columns_container = tb.Frame(self.config_frame, bootstyle="light")
+        columns_container.pack(fill='both', expand=True, padx=15, pady=15)
+        
+        # ========== COLUMNA IZQUIERDA ==========
+        left_column = tb.Frame(columns_container, bootstyle="light")
+        left_column.pack(side='left', fill='both', expand=True, padx=(0, 10))
+        
         # Frame para gestión de base de datos
         db_frame = tb.Labelframe(
-            self.config_frame, 
+            left_column, 
             text="💾 Gestión de Base de Datos", 
             padding=20,
             bootstyle="secondary"
         )
-        db_frame.pack(fill='x', padx=15, pady=15)
+        db_frame.pack(fill='x', pady=(0, 15))
         
         tb.Label(
             db_frame, 
@@ -1861,58 +1946,54 @@ class MainWindow:
         
         tb.Button(
             buttons_db_frame, 
-            text="📂 Cargar Base de Datos", 
+            text="📂 Cargar BD", 
             command=self.cargar_base_datos,
             bootstyle="primary",
-            width=25
+            width=18
         ).pack(side='left', padx=5)
         
         tb.Button(
             buttons_db_frame, 
-            text="➕ Nueva Base de Datos", 
+            text="➕ Nueva BD", 
             command=self.nueva_base_datos,
             bootstyle="success",
-            width=25
+            width=18
         ).pack(side='left', padx=5)
         
         tb.Button(
             buttons_db_frame, 
-            text="📄 Exportar Resumen", 
+            text="📄 Exportar", 
             command=self.exportar_resumen,
             bootstyle="info",
-            width=25
+            width=18
         ).pack(side='left', padx=5)
-        
-        # Separador
-        tb.Separator(self.config_frame, orient='horizontal').pack(fill='x', padx=15, pady=10)
         
         # Frame para OneDrive
         onedrive_frame = tb.Labelframe(
-            self.config_frame, 
+            left_column, 
             text="☁️ Sincronización con OneDrive", 
             padding=20,
             bootstyle="secondary"
         )
-        onedrive_frame.pack(fill='x', padx=15, pady=(0, 15))
+        onedrive_frame.pack(fill='x', pady=(0, 15))
         
         # Información sobre OneDrive
         info_onedrive = tb.Label(
             onedrive_frame, 
-            text="Configura la base de datos en OneDrive para sincronizar entre múltiples computadoras.\n"
-                 "⚠️ Nota: Asegúrate de que OneDrive esté sincronizado antes de usar el sistema.",
+            text="Sincroniza la BD entre múltiples PCs.\n⚠️ OneDrive debe estar sincronizado.",
             font=('Segoe UI', 9),
             bootstyle="info",
-            wraplength=700
+            wraplength=500
         )
-        info_onedrive.pack(anchor='w', pady=(0, 15))
+        info_onedrive.pack(anchor='w', pady=(0, 10))
         
         # Detectar OneDrive
         onedrive_path = Settings.detect_onedrive_path()
         if onedrive_path:
-            status_text = f"✅ OneDrive detectado: {onedrive_path}"
+            status_text = f"✅ OneDrive: {onedrive_path[:40]}..."
             status_style = "success"
         else:
-            status_text = "❌ OneDrive no detectado en este equipo"
+            status_text = "❌ OneDrive no detectado"
             status_style = "danger"
         
         tb.Label(
@@ -1920,7 +2001,7 @@ class MainWindow:
             text=status_text,
             font=('Segoe UI', 9, 'bold'),
             bootstyle=status_style
-        ).pack(anchor='w', pady=(0, 15))
+        ).pack(anchor='w', pady=(0, 10))
         
         # Botones de OneDrive
         buttons_onedrive = tb.Frame(onedrive_frame)
@@ -1928,18 +2009,18 @@ class MainWindow:
         
         tb.Button(
             buttons_onedrive, 
-            text="☁️ Configurar BD en OneDrive", 
+            text="☁️ Configurar OneDrive", 
             command=self.configurar_onedrive,
             bootstyle="primary",
-            width=30
+            width=25
         ).pack(side='left', padx=5)
         
         tb.Button(
             buttons_onedrive, 
-            text="📂 Seleccionar Ubicación Manual", 
+            text="📂 Ubicación Manual", 
             command=self.seleccionar_ubicacion_manual,
             bootstyle="info",
-            width=30
+            width=25
         ).pack(side='left', padx=5)
         
         # Estado actual
@@ -1947,31 +2028,28 @@ class MainWindow:
         is_cloud = Settings.is_using_cloud_storage()
         
         if is_cloud:
-            estado_text = f"🌐 Usando almacenamiento en la nube\nRuta: {current_db}"
+            estado_text = f"🌐 Nube\n{current_db[:50]}..."
             estado_style = "success"
         else:
-            estado_text = f"💻 Usando almacenamiento local\nRuta: {current_db}"
+            estado_text = f"💻 Local\n{current_db[:50]}..."
             estado_style = "secondary"
         
         self.estado_cloud_label = tb.Label(
             onedrive_frame, 
             text=estado_text,
-            font=('Segoe UI', 9),
+            font=('Segoe UI', 8),
             bootstyle=estado_style
         )
-        self.estado_cloud_label.pack(anchor='w', pady=(15, 0))
-        
-        # Separador
-        tb.Separator(self.config_frame, orient='horizontal').pack(fill='x', padx=15, pady=10)
+        self.estado_cloud_label.pack(anchor='w', pady=(10, 0))
         
         # Frame para temas
         theme_frame = tb.Labelframe(
-            self.config_frame, 
+            left_column, 
             text="🎨 Tema de la Aplicación", 
             padding=20,
             bootstyle="secondary"
         )
-        theme_frame.pack(fill='x', padx=15, pady=(0, 15))
+        theme_frame.pack(fill='x', pady=(0, 15))
         
         tb.Label(
             theme_frame, 
@@ -1979,7 +2057,7 @@ class MainWindow:
             font=('Segoe UI', 10, 'bold')
         ).pack(anchor='w', pady=(0, 10))
         
-        # Temas disponibles (selección optimizada)
+        # Temas disponibles
         themes_list = ['cosmo', 'flatly', 'minty', 'yeti']
         
         themes_buttons = tb.Frame(theme_frame)
@@ -1995,49 +2073,52 @@ class MainWindow:
                 text=theme.capitalize(), 
                 command=lambda t=theme: self.cambiar_tema(t),
                 bootstyle="outline",
-                width=15
-            ).pack(side='left', padx=5)
+                width=13
+            ).pack(side='left', padx=3)
         
-        # Separador
-        tb.Separator(self.config_frame, orient='horizontal').pack(fill='x', padx=15, pady=10)
+        # ========== COLUMNA DERECHA ==========
+        right_column = tb.Frame(columns_container, bootstyle="light")
+        right_column.pack(side='left', fill='both', expand=True, padx=(10, 0))
         
-        # Frame para información adicional con scroll
+        # Frame de información del sistema CON SCROLL
         info_frame = tb.Labelframe(
-            self.config_frame, 
-            text="ℹ️ Información del Sistema", 
-            padding=10,
+            right_column,
+            text="ℹ️ Información del Sistema",
+            padding=15,
             bootstyle="secondary"
         )
-        info_frame.pack(fill='both', expand=True, padx=15, pady=(0, 15))
+        info_frame.pack(fill='both', expand=True)
         
-        # Crear canvas con scrollbar
-        canvas = tk.Canvas(info_frame, highlightthickness=0)
-        scrollbar = tb.Scrollbar(info_frame, orient="vertical", command=canvas.yview, bootstyle="secondary-round")
-        scrollable_frame = tb.Frame(canvas)
+        # Canvas y scrollbar para el contenido
+        canvas_info = tk.Canvas(info_frame, highlightthickness=0, bg='white')
+        scrollbar_info = tb.Scrollbar(info_frame, orient="vertical", command=canvas_info.yview, bootstyle="secondary-round")
+        info_content_frame = tb.Frame(canvas_info, bootstyle="light")
         
-        scrollable_frame.bind(
+        info_content_frame.bind(
             "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            lambda e: canvas_info.configure(scrollregion=canvas_info.bbox("all"))
         )
         
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        # Crear ventana con ancho dinámico
+        window_id = canvas_info.create_window((0, 0), window=info_content_frame, anchor="nw")
+        
+        # Función para ajustar el ancho del frame interno al canvas
+        def configure_canvas_width(event):
+            canvas_width = event.width
+            canvas_info.itemconfig(window_id, width=canvas_width)
+        
+        canvas_info.bind('<Configure>', configure_canvas_width)
+        canvas_info.configure(yscrollcommand=scrollbar_info.set)
         
         # Habilitar scroll con la rueda del mouse
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        def _on_mousewheel_info(event):
+            canvas_info.yview_scroll(int(-1*(event.delta/120)), "units")
         
-        # Bind para Windows/Mac
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas_info.bind_all("<MouseWheel>", _on_mousewheel_info)
+        canvas_info.pack(side="left", fill="both", expand=True)
+        scrollbar_info.pack(side="right", fill="y")
         
-        # Bind para Linux
-        canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
-        canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
-        
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-        
-        # Contenido de información
+        # Contenido de información completo (versión original restaurada)
         info_text = """🏢 Sistema de Control de Inventarios v2.0
 
 ✨ Características Principales:
@@ -2049,6 +2130,7 @@ class MainWindow:
   • Reportes financieros visuales y detallados
   • Exportación de reportes a Excel con filtros de fecha
   • Base de datos SQLite local confiable
+  • Sincronización con OneDrive (Nuevo!)
   • Interfaz moderna e intuitiva con ttkbootstrap
   • Temas personalizables con persistencia
   • Búsqueda y filtrado de productos
@@ -2058,48 +2140,38 @@ class MainWindow:
 🎨 Código de Colores:
 
 📦 INVENTARIO (Stock):
-  🔴 Stock Bajo (≤5 unidades)
-     Color: Rosa claro (#ffcccc)
+  🔴 Stock Bajo (≤5 unidades) - Color: Rosa claro (#ffcccc)
      Indica que necesita reabastecimiento
 
 🛒 COMPRAS (Vencimientos):
-  🔴 VENCIDO (fecha ya pasó)
-     Color: Rojo fuerte (#ff6b6b) con texto blanco
+  🔴 VENCIDO (fecha ya pasó) - Color: Rojo (#ff6b6b)
      Acción: Revisar y gestionar producto
   
-  🟠 CRÍTICO (1-7 días restantes)
-     Color: Naranja (#ffa502)
+  🟠 CRÍTICO (1-7 días) - Color: Naranja (#ffa502)
      Acción: Vender con urgencia o promocionar
   
-  🟡 ADVERTENCIA (8-30 días restantes)
-     Color: Amarillo (#ffd93d)
+  🟡 ADVERTENCIA (8-30 días) - Color: Amarillo (#ffd93d)
      Acción: Monitorear y planificar ventas
   
-  ⚪ NORMAL (>30 días o no perecedero)
-     Sin color especial
+  ⚪ NORMAL (>30 días o no perecedero) - Sin color especial
 
 💰 CAJA (Movimientos):
-  🟢 INGRESO: Verde
-  🔴 EGRESO: Rojo
-  🔴 Saldo Negativo: Rojo
+  🟢 INGRESO: Verde  |  🔴 EGRESO: Rojo  |  🔴 Saldo Negativo: Rojo
 
-💰 Moneda de referencia: Quetzales (Q)
-
+💰 Moneda: Quetzales (Q)
 👨‍💻 Desarrollado por: Elizandro Urizar
-
 🛠️ Tecnologías: Python, tkinter, ttkbootstrap, SQLite, pandas, openpyxl
-
 📅 Versión: 2.0 - Octubre 2025
         """
         
         info_label = tb.Label(
-            scrollable_frame, 
+            info_content_frame, 
             text=info_text, 
             justify='left',
             font=('Segoe UI', 9),
-            wraplength=700
+            wraplength=900
         )
-        info_label.pack(anchor='w', padx=10, pady=10)
+        info_label.pack(anchor='w', padx=15, pady=15, fill='both', expand=True)
     
     def cambiar_tema(self, tema):
         """Cambia el tema de la aplicación"""
@@ -2279,6 +2351,234 @@ class MainWindow:
         """Actualiza el precio de compra automáticamente (YA NO SE USA - búsqueda ahora)"""
         pass
     
+    def abrir_generador_sku(self):
+        """Abre ventana para generar código SKU automáticamente"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🏷️ Generador de Código SKU")
+        dialog.geometry("750x750")  # Aumentado de 650 a 750
+        dialog.transient(self.root)
+        dialog.withdraw()
+        dialog.grab_set()
+        self.agregar_icono(dialog)
+        
+        # Frame principal con scroll
+        main_frame = tb.Frame(dialog, padding=25)
+        main_frame.pack(fill='both', expand=True)
+        
+        # Título
+        tb.Label(
+            main_frame,
+            text="🏷️ Generador Automático de Código SKU",
+            font=('Segoe UI', 16, 'bold'),
+            bootstyle="primary"
+        ).pack(pady=(0, 8))
+        
+        # Descripción
+        tb.Label(
+            main_frame,
+            text="Complete los campos necesarios para generar un código único y descriptivo",
+            font=('Segoe UI', 10),
+            bootstyle="secondary",
+            justify='center'
+        ).pack(pady=(0, 15))
+        
+        # Frame para campos
+        canvas_frame = tb.Frame(main_frame)
+        canvas_frame.pack(fill='both', expand=True, pady=10)
+        
+        # Variables para los campos - CARGAR DATOS GUARDADOS
+        sku_vars = {
+            'nombre': tk.StringVar(value=self.sku_data.get('nombre', '')),
+            'categoria': tk.StringVar(value=self.sku_data.get('categoria', '')),
+            'marca': tk.StringVar(value=self.sku_data.get('marca', '')),
+            'color': tk.StringVar(value=self.sku_data.get('color', '')),
+            'tamaño': tk.StringVar(value=self.sku_data.get('tamaño', '')),
+            'dibujo': tk.StringVar(value=self.sku_data.get('dibujo', '')),
+            'cod_color': tk.StringVar(value=self.sku_data.get('cod_color', ''))
+        }
+        
+        # Crear campos de entrada más grandes
+        campos = [
+            ('Nombre del Producto:', 'nombre', 'Ejemplo: BRILLOS CON LLAVERO', True),
+            ('Categoría:', 'categoria', 'Ejemplo: Labial', True),
+            ('Marca:', 'marca', 'Ejemplo: Guess', False),
+            ('Color:', 'color', 'Ejemplo: ROJO', False),
+            ('Tamaño:', 'tamaño', 'Ejemplo: Mediano', False),
+            ('Dibujo:', 'dibujo', 'Ejemplo: Gato', False),
+            ('Código de Color:', 'cod_color', 'Ejemplo: R20 (se mantiene completo)', False)
+        ]
+        
+        for idx, (label, key, placeholder, required) in enumerate(campos):
+            # Frame para cada campo con grid para mejor alineación
+            field_frame = tb.Frame(canvas_frame)
+            field_frame.pack(fill='x', pady=6)
+            
+            # Label con indicador de requerido - ALINEADO
+            label_text = f"{label} {'*' if required else ''}"
+            label_widget = tb.Label(
+                field_frame,
+                text=label_text,
+                font=('Segoe UI', 11, 'bold' if required else 'normal'),
+                anchor='e'
+            )
+            label_widget.grid(row=0, column=0, sticky='e', padx=(0, 10), ipadx=5)
+            
+            # Entry más grande - ALINEADO
+            entry = tb.Entry(
+                field_frame,
+                textvariable=sku_vars[key],
+                width=30,
+                font=('Segoe UI', 11)
+            )
+            entry.grid(row=0, column=1, sticky='w', padx=5)
+            
+            # Placeholder más visible - ALINEADO
+            tb.Label(
+                field_frame,
+                text=placeholder,
+                font=('Segoe UI', 9, 'italic'),
+                bootstyle="secondary",
+                anchor='w'
+            ).grid(row=0, column=2, sticky='w', padx=5)
+            
+            # Configurar columnas para alineación
+            field_frame.columnconfigure(0, minsize=180)  # Label fijo
+            field_frame.columnconfigure(1, minsize=280)  # Entry fijo
+            
+            # Bind para actualizar SKU en tiempo real
+            sku_vars[key].trace('w', lambda *args: actualizar_preview())
+        
+        # Separador
+        tb.Separator(main_frame, orient='horizontal').pack(fill='x', pady=15)
+        
+        # Preview del SKU generado - MÁS GRANDE
+        preview_frame = tb.Labelframe(
+            main_frame,
+            text="📋 Vista Previa del Código SKU Generado",
+            padding=20,
+            bootstyle="success"
+        )
+        preview_frame.pack(fill='x', pady=10)
+        
+        sku_preview_var = tk.StringVar(value="Complete los campos para generar el código...")
+        sku_preview_label = tb.Label(
+            preview_frame,
+            textvariable=sku_preview_var,
+            font=('Segoe UI', 14, 'bold'),
+            bootstyle="success",
+            wraplength=650
+        )
+        sku_preview_label.pack(pady=5)
+        
+        # Nota explicativa
+        tb.Label(
+            preview_frame,
+            text="Formato: NOMBRE-CATEGORIA-MARCA-COLOR-CODCOLOR-TAMAÑO-DIBUJO-CORRELATIVO",
+            font=('Segoe UI', 8),
+            bootstyle="secondary"
+        ).pack()
+        
+        def generar_codigo_sku():
+            """Genera el código SKU basado en los campos"""
+            partes = []
+            
+            # Procesar cada campo en el orden especificado - INCLUYE COLOR
+            for key in ['nombre', 'categoria', 'marca', 'color', 'cod_color', 'tamaño', 'dibujo']:
+                valor = sku_vars[key].get().strip().upper()
+                if valor:
+                    if key == 'cod_color':
+                        # Código de color se mantiene completo
+                        partes.append(valor)
+                    else:
+                        # Tomar primeras 3 letras de cada palabra
+                        palabras = valor.split()
+                        if palabras:
+                            # Si es una sola palabra, tomar 3 caracteres
+                            if len(palabras) == 1:
+                                partes.append(palabras[0][:3])
+                            else:
+                                # Si son múltiples palabras, tomar primera palabra
+                                partes.append(palabras[0][:3])
+            
+            if partes:
+                # Agregar correlativo (siempre 001 para nuevos)
+                codigo_base = '-'.join(partes)
+                return f"{codigo_base}-001"
+            return ""
+        
+        def actualizar_preview():
+            """Actualiza la vista previa del SKU"""
+            codigo = generar_codigo_sku()
+            if codigo:
+                sku_preview_var.set(codigo)
+            else:
+                sku_preview_var.set("Complete los campos para generar el código...")
+        
+        def aplicar_sku():
+            """Aplica el código SKU generado al campo de código"""
+            codigo = generar_codigo_sku()
+            if codigo:
+                # Guardar los datos para la próxima vez
+                for key in sku_vars:
+                    self.sku_data[key] = sku_vars[key].get()
+                
+                # Habilitar temporalmente el campo para actualizar
+                self.codigo_entry.config(state='normal')
+                self.producto_codigo.set(codigo)
+                self.codigo_entry.config(state='disabled')
+                
+                # También llenar nombre y categoría si están vacíos
+                if not self.producto_nombre.get() and sku_vars['nombre'].get():
+                    self.producto_nombre.set(sku_vars['nombre'].get())
+                if not self.producto_categoria.get() and sku_vars['categoria'].get():
+                    self.producto_categoria.set(sku_vars['categoria'].get())
+                
+                dialog.destroy()
+                messagebox.showinfo("✅ Código Generado", f"Código SKU aplicado correctamente:\n\n{codigo}\n\nEl código está protegido.\nPara modificarlo, use nuevamente el generador.")
+            else:
+                messagebox.showwarning("⚠️ Campos Incompletos", "Complete al menos el Nombre y la Categoría para generar el código")
+        
+        def limpiar_campos_sku():
+            """Limpia todos los campos del generador"""
+            for key in sku_vars:
+                sku_vars[key].set('')
+            actualizar_preview()
+        
+        # Actualizar preview inicial si hay datos
+        actualizar_preview()
+        
+        # Botones más grandes con botón de limpiar
+        buttons_frame = tb.Frame(main_frame)
+        buttons_frame.pack(pady=20)
+        
+        tb.Button(
+            buttons_frame,
+            text="✓ Aplicar Código SKU",
+            command=aplicar_sku,
+            bootstyle="success",
+            width=20
+        ).pack(side='left', padx=5)
+        
+        tb.Button(
+            buttons_frame,
+            text="🗑️ Limpiar Campos",
+            command=limpiar_campos_sku,
+            bootstyle="warning",
+            width=20
+        ).pack(side='left', padx=5)
+        
+        tb.Button(
+            buttons_frame,
+            text="✗ Cancelar",
+            command=dialog.destroy,
+            bootstyle="secondary",
+            width=20
+        ).pack(side='left', padx=5)
+        
+        # Centrar y mostrar
+        self.centrar_ventana(dialog)
+        dialog.deiconify()
+    
     # MÉTODOS DE ACCIÓN
     def crear_producto(self):
         """Crea un nuevo producto"""
@@ -2289,7 +2589,12 @@ class MainWindow:
             precio_compra = self.producto_precio_compra.get()
             ganancia = self.producto_ganancia.get()
             
-            exito, mensaje = self.controller.crear_producto(codigo, nombre, categoria, precio_compra, ganancia)
+            # Extraer datos del SKU si existen
+            marca = self.sku_data.get('marca', '')
+            color = self.sku_data.get('color', '')
+            tamaño = self.sku_data.get('tamaño', '')
+            
+            exito, mensaje = self.controller.crear_producto(codigo, nombre, categoria, precio_compra, ganancia, marca, color, tamaño)
             
             if exito:
                 messagebox.showinfo("Éxito", mensaje)
@@ -2315,8 +2620,13 @@ class MainWindow:
             precio_compra = self.producto_precio_compra.get()
             ganancia = self.producto_ganancia.get()
             
+            # Extraer datos del SKU si existen
+            marca = self.sku_data.get('marca', '')
+            color = self.sku_data.get('color', '')
+            tamaño = self.sku_data.get('tamaño', '')
+            
             exito, mensaje = self.controller.actualizar_producto(
-                self.producto_seleccionado, codigo, nombre, categoria, precio_compra, ganancia
+                self.producto_seleccionado, codigo, nombre, categoria, precio_compra, ganancia, marca, color, tamaño
             )
             
             if exito:
@@ -3200,7 +3510,8 @@ class MainWindow:
                 
                 if producto:
                     self.producto_seleccionado = producto_id
-                    self.producto_codigo.set(producto.get('codigo', ''))
+                    codigo = producto.get('codigo', '')
+                    self.producto_codigo.set(codigo)
                     self.producto_nombre.set(producto['nombre'])
                     self.producto_categoria.set(producto.get('categoria', ''))
                     self.producto_precio_compra.set(producto['precio_compra'])
@@ -3211,8 +3522,73 @@ class MainWindow:
                     # Mantener en modo porcentaje por defecto
                     self.producto_tipo_calculo.set("porcentaje")
                     self.cambiar_tipo_calculo()
+                    
+                    # Parsear el código SKU para cargar datos en el generador
+                    self.parsear_codigo_sku(codigo, producto['nombre'], producto.get('categoria', ''))
         except:
             pass
+    
+    def parsear_codigo_sku(self, codigo, nombre, categoria):
+        """Parsea un código SKU y extrae los componentes para el generador"""
+        try:
+            # Limpiar datos actuales
+            self.sku_data = {
+                'nombre': '',
+                'categoria': '',
+                'marca': '',
+                'color': '',
+                'tamaño': '',
+                'dibujo': '',
+                'cod_color': ''
+            }
+            
+            # Si el código tiene el formato esperado (partes separadas por -)
+            if '-' in codigo:
+                partes = codigo.split('-')
+                
+                # Intentar reconstruir los datos desde el código
+                # Formato: NOMBRE-CATEGORIA-MARCA-COLOR-CODCOLOR-TAMAÑO-DIBUJO-CORRELATIVO
+                if len(partes) >= 2:
+                    self.sku_data['nombre'] = nombre  # Usar el nombre completo del producto
+                    self.sku_data['categoria'] = categoria  # Usar la categoría completa
+                    
+                    # Intentar identificar las partes restantes
+                    idx = 2
+                    if len(partes) > idx and len(partes[idx]) == 3:
+                        self.sku_data['marca'] = partes[idx]
+                        idx += 1
+                    
+                    if len(partes) > idx and len(partes[idx]) == 3:
+                        self.sku_data['color'] = partes[idx]
+                        idx += 1
+                    
+                    # Código de color (puede tener longitud variable)
+                    if len(partes) > idx and len(partes[idx]) > 0 and partes[idx][0].isalpha():
+                        self.sku_data['cod_color'] = partes[idx]
+                        idx += 1
+                    
+                    if len(partes) > idx and len(partes[idx]) == 3:
+                        self.sku_data['tamaño'] = partes[idx]
+                        idx += 1
+                    
+                    if len(partes) > idx and len(partes[idx]) == 3:
+                        self.sku_data['dibujo'] = partes[idx]
+            else:
+                # Si no tiene formato SKU, solo guardar nombre y categoría
+                self.sku_data['nombre'] = nombre
+                self.sku_data['categoria'] = categoria
+                
+        except Exception as e:
+            # En caso de error, solo usar nombre y categoría
+            self.sku_data = {
+                'nombre': nombre,
+                'categoria': categoria,
+                'marca': '',
+                'color': '',
+                'tamaño': '',
+                'dibujo': '',
+                'cod_color': ''
+            }
     
     def limpiar_formulario_producto(self):
         """Limpia el formulario de productos"""
@@ -3226,7 +3602,86 @@ class MainWindow:
         self.precio_venta_label.config(text="Precio de Venta: Q 0.00")
         self.monto_ganancia_label.config(text="Ganancia: Q 0.00")
         self.producto_seleccionado = None
+        
+        # Limpiar datos guardados del SKU
+        self.sku_data = {
+            'nombre': '',
+            'categoria': '',
+            'marca': '',
+            'color': '',
+            'tamaño': '',
+            'dibujo': '',
+            'cod_color': ''
+        }
+        
         self.cambiar_tipo_calculo()  # Resetear la vista
+    
+    def mostrar_tooltip_sku(self, event):
+        """Muestra tooltip con desglose del SKU al pasar el mouse sobre la columna de código"""
+        try:
+            # Identificar sobre qué fila y columna está el mouse
+            region = self.productos_tree.identify('region', event.x, event.y)
+            if region != 'cell':
+                self.ocultar_tooltip_sku(None)
+                return
+            
+            column = self.productos_tree.identify_column(event.x)
+            item = self.productos_tree.identify_row(event.y)
+            
+            # Solo mostrar tooltip en la columna de Código (columna #1)
+            if column != '#1' or not item:
+                self.ocultar_tooltip_sku(None)
+                return
+            
+            # Obtener datos de la fila
+            values = self.productos_tree.item(item)['values']
+            if not values or len(values) < 7:
+                self.ocultar_tooltip_sku(None)
+                return
+            
+            producto_id = values[0]
+            codigo = values[1]
+            nombre = values[2]
+            categoria = values[3]
+            marca = values[4] if values[4] else 'N/A'
+            color = values[5] if values[5] else 'N/A'
+            tamaño = values[6] if values[6] else 'N/A'
+            
+            # Si no hay código, no mostrar tooltip
+            if not codigo or codigo == '':
+                self.ocultar_tooltip_sku(None)
+                return
+            
+            # Crear texto del tooltip con formato bonito
+            tooltip_text = f"📦 DESGLOSE DEL CÓDIGO SKU\n"
+            tooltip_text += f"{'─' * 35}\n\n"
+            tooltip_text += f"Código Completo: {codigo}\n\n"
+            tooltip_text += f"🏷️  Nombre:     {nombre}\n"
+            tooltip_text += f"📁  Categoría:  {categoria}\n"
+            tooltip_text += f"🏭  Marca:      {marca}\n"
+            tooltip_text += f"🎨  Color:      {color}\n"
+            tooltip_text += f"📏  Tamaño:     {tamaño}"
+            
+            # Calcular posición del tooltip (al lado del cursor)
+            x = event.x_root + 15
+            y = event.y_root + 10
+            
+            # Ocultar tooltip anterior si existe
+            if self.tooltip_sku:
+                self.tooltip_sku.hidetip()
+            
+            # Crear y mostrar nuevo tooltip
+            self.tooltip_sku = ToolTip(self.productos_tree)
+            self.tooltip_sku.showtip(tooltip_text, x, y)
+            
+        except Exception as e:
+            pass
+    
+    def ocultar_tooltip_sku(self, event):
+        """Oculta el tooltip del SKU"""
+        if self.tooltip_sku:
+            self.tooltip_sku.hidetip()
+            self.tooltip_sku = None
     
     def desactivar_producto(self):
         """Marca un producto como inactivo"""
@@ -3737,6 +4192,9 @@ class MainWindow:
                 producto.get('codigo', ''),
                 producto['nombre'],
                 producto.get('categoria', ''),
+                producto.get('marca', ''),
+                producto.get('color', ''),
+                producto.get('tamaño', ''),
                 f"Q {producto['precio_compra']:,.2f}",
                 f"{producto['porcentaje_ganancia']:.2f}%",
                 f"Q {monto_ganancia:,.2f}",

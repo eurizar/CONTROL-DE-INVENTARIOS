@@ -79,6 +79,22 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass  # La columna ya existe
             
+            # Agregar columnas para datos del SKU (marca, color, tamaño)
+            try:
+                cursor.execute('ALTER TABLE productos ADD COLUMN marca TEXT')
+            except sqlite3.OperationalError:
+                pass  # La columna ya existe
+            
+            try:
+                cursor.execute('ALTER TABLE productos ADD COLUMN color TEXT')
+            except sqlite3.OperationalError:
+                pass  # La columna ya existe
+            
+            try:
+                cursor.execute('ALTER TABLE productos ADD COLUMN tamaño TEXT')
+            except sqlite3.OperationalError:
+                pass  # La columna ya existe
+            
             # Tabla de compras
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS compras (
@@ -269,15 +285,15 @@ class DatabaseManager:
             return cursor.rowcount
     
     # MÉTODOS PARA PRODUCTOS
-    def crear_producto(self, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float) -> int:
-        """Crea un nuevo producto"""
+    def crear_producto(self, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '') -> int:
+        """Crea un nuevo producto con datos adicionales del SKU"""
         precio_venta = round(precio_compra * (1 + porcentaje_ganancia / 100), 2)
         monto_ganancia = round(precio_venta - precio_compra, 2)
         query = '''
-            INSERT INTO productos (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO productos (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
-        return self.execute_insert(query, (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia))
+        return self.execute_insert(query, (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño))
     
     def obtener_productos(self) -> List[Dict]:
         """Obtiene todos los productos ordenados por ID ascendente"""
@@ -305,16 +321,16 @@ class DatabaseManager:
         resultado = self.execute_query(query, (producto_id,))
         return resultado[0] if resultado else None
     
-    def actualizar_producto(self, producto_id: int, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float):
-        """Actualiza un producto"""
+    def actualizar_producto(self, producto_id: int, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = ''):
+        """Actualiza un producto con datos adicionales del SKU"""
         precio_venta = round(precio_compra * (1 + porcentaje_ganancia / 100), 2)
         monto_ganancia = round(precio_venta - precio_compra, 2)
         query = '''
             UPDATE productos 
-            SET codigo = ?, nombre = ?, categoria = ?, precio_compra = ?, porcentaje_ganancia = ?, precio_venta = ?, monto_ganancia = ?
+            SET codigo = ?, nombre = ?, categoria = ?, precio_compra = ?, porcentaje_ganancia = ?, precio_venta = ?, monto_ganancia = ?, marca = ?, color = ?, tamaño = ?
             WHERE id = ?
         '''
-        return self.execute_update(query, (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, producto_id))
+        return self.execute_update(query, (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño, producto_id))
     
     def actualizar_stock(self, producto_id: int, nuevo_stock: int):
         """Actualiza el stock de un producto"""

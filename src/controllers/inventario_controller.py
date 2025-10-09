@@ -21,8 +21,8 @@ class InventarioController:
         self.db = DatabaseManager(db_path)
     
     # GESTIÓN DE PRODUCTOS
-    def crear_producto(self, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float) -> Tuple[bool, str]:
-        """Crea un nuevo producto"""
+    def crear_producto(self, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '') -> Tuple[bool, str]:
+        """Crea un nuevo producto con datos adicionales del SKU"""
         try:
             if not nombre.strip():
                 return False, "El nombre del producto no puede estar vacío"
@@ -33,7 +33,7 @@ class InventarioController:
             if porcentaje_ganancia < 0:
                 return False, "El porcentaje de ganancia no puede ser negativo"
             
-            producto_id = self.db.crear_producto(codigo.strip() if codigo else "", nombre.strip(), categoria.strip() if categoria else "", precio_compra, porcentaje_ganancia)
+            producto_id = self.db.crear_producto(codigo.strip() if codigo else "", nombre.strip(), categoria.strip() if categoria else "", precio_compra, porcentaje_ganancia, marca.strip(), color.strip(), tamaño.strip())
             return True, f"Producto creado con ID: {producto_id}"
         
         except Exception as e:
@@ -49,8 +49,8 @@ class InventarioController:
         """Obtiene un producto por su ID"""
         return self.db.obtener_producto_por_id(producto_id)
     
-    def actualizar_producto(self, producto_id: int, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float) -> Tuple[bool, str]:
-        """Actualiza un producto existente"""
+    def actualizar_producto(self, producto_id: int, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '') -> Tuple[bool, str]:
+        """Actualiza un producto existente con datos adicionales del SKU"""
         try:
             if not nombre.strip():
                 return False, "El nombre del producto no puede estar vacío"
@@ -61,7 +61,7 @@ class InventarioController:
             if porcentaje_ganancia < 0:
                 return False, "El porcentaje de ganancia no puede ser negativo"
             
-            filas_afectadas = self.db.actualizar_producto(producto_id, codigo.strip() if codigo else "", nombre.strip(), categoria.strip() if categoria else "", precio_compra, porcentaje_ganancia)
+            filas_afectadas = self.db.actualizar_producto(producto_id, codigo.strip() if codigo else "", nombre.strip(), categoria.strip() if categoria else "", precio_compra, porcentaje_ganancia, marca.strip(), color.strip(), tamaño.strip())
             
             if filas_afectadas > 0:
                 return True, "Producto actualizado correctamente"
