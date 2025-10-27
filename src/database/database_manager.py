@@ -46,7 +46,7 @@ class DatabaseManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     nombre TEXT NOT NULL,
                     nit_dpi TEXT NOT NULL UNIQUE,
-                    direccion TEXT NOT NULL,
+                    direccion TEXT,
                     telefono TEXT,
                     fecha_registro TEXT DEFAULT CURRENT_TIMESTAMP
                 )
@@ -95,6 +95,17 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass  # La columna ya existe
             
+            # Agregar columnas adicionales del generador SKU (dibujo, cod_color)
+            try:
+                cursor.execute('ALTER TABLE productos ADD COLUMN dibujo TEXT')
+            except sqlite3.OperationalError:
+                pass  # La columna ya existe
+            
+            try:
+                cursor.execute('ALTER TABLE productos ADD COLUMN cod_color TEXT')
+            except sqlite3.OperationalError:
+                pass  # La columna ya existe
+            
             # Tabla de compras
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS compras (
@@ -111,19 +122,30 @@ class DatabaseManager:
                 )
             ''')
             
-            # Tabla de ventas
+            # Tabla de ventas (encabezado) - NUEVA ESTRUCTURA
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ventas (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    referencia_no INTEGER NOT NULL UNIQUE,
-                    producto_id INTEGER,
+                    referencia_no TEXT NOT NULL UNIQUE,
                     cliente_id INTEGER,
+                    fecha TEXT NOT NULL,
+                    total REAL NOT NULL,
+                    estado TEXT DEFAULT 'Emitido',
+                    FOREIGN KEY (cliente_id) REFERENCES clientes (id)
+                )
+            ''')
+            
+            # Tabla de detalle de ventas (productos individuales) - NUEVA
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ventas_detalle (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    venta_id INTEGER NOT NULL,
+                    producto_id INTEGER,
                     cantidad INTEGER NOT NULL,
                     precio_unitario REAL NOT NULL,
-                    total REAL NOT NULL,
-                    fecha TEXT NOT NULL,
-                    FOREIGN KEY (producto_id) REFERENCES productos (id),
-                    FOREIGN KEY (cliente_id) REFERENCES clientes (id)
+                    subtotal REAL NOT NULL,
+                    FOREIGN KEY (venta_id) REFERENCES ventas (id) ON DELETE CASCADE,
+                    FOREIGN KEY (producto_id) REFERENCES productos (id)
                 )
             ''')
             
@@ -180,7 +202,135 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass  # La columna ya existe
             
+            # MIGRACIÓN: Verificar si hay datos en la tabla ventas antigua
+            # Si existe la columna producto_id en ventas, significa que es la estructura antigua
+            try:
+                cursor.execute("SELECT producto_id FROM ventas LIMIT 1")
+                # Si llega aquí, la tabla tiene estructura antigua - necesita migración
+                # Verificar si hay datos
+                cursor.execute("SELECT COUNT(*) FROM ventas")
+                count = cursor.fetchone()[0]
+                
+                if count > 0:
+                    # Hay datos, hacer migración completa
+                    self._migrar_ventas_a_nueva_estructura(cursor)
+                else:
+                    # No hay datos, solo actualizar estructura
+                    print("Actualizando estructura de tabla ventas (sin datos)...")
+                    cursor.execute("DROP TABLE ventas")
+                    cursor.execute('''
+                        CREATE TABLE ventas (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            referencia_no TEXT NOT NULL UNIQUE,
+                            cliente_id INTEGER,
+                            fecha TEXT NOT NULL,
+                            total REAL NOT NULL,
+                            estado TEXT DEFAULT 'Emitido',
+                            FOREIGN KEY (cliente_id) REFERENCES clientes (id)
+                        )
+                    ''')
+            except sqlite3.OperationalError:
+                # La columna producto_id no existe, es la nueva estructura
+                # Verificar si falta la columna estado
+                try:
+                    cursor.execute("SELECT estado FROM ventas LIMIT 1")
+                except sqlite3.OperationalError:
+                    # Falta columna estado, agregarla
+                    try:
+                        cursor.execute("ALTER TABLE ventas ADD COLUMN estado TEXT DEFAULT 'Emitido'")
+                        print("Columna 'estado' agregada a la tabla ventas")
+                    except sqlite3.OperationalError:
+                        pass  # Ya existe
+            
             conn.commit()
+    
+    def _migrar_ventas_a_nueva_estructura(self, cursor):
+        """Migra ventas de la estructura antigua (un producto por venta) a la nueva (encabezado + detalle)"""
+        try:
+            # Verificar si ya existe la tabla ventas_detalle
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ventas_detalle'")
+            if not cursor.fetchone():
+                return  # No hay tabla detalle, no migrar aún
+            
+            # Verificar si hay datos para migrar
+            cursor.execute("SELECT COUNT(*) as count FROM ventas")
+            count_result = cursor.fetchone()
+            if not count_result or count_result[0] == 0:
+                return  # No hay ventas para migrar
+            
+            # Obtener todas las ventas antiguas agrupadas por referencia_no
+            cursor.execute("""
+                SELECT referencia_no, cliente_id, fecha, 
+                       producto_id, cantidad, precio_unitario, total
+                FROM ventas
+                ORDER BY referencia_no, id
+            """)
+            ventas_antiguas = cursor.fetchall()
+            
+            if not ventas_antiguas:
+                return
+            
+            # Renombrar tabla antigua
+            cursor.execute("ALTER TABLE ventas RENAME TO ventas_old")
+            
+            # Crear nueva tabla ventas (encabezado)
+            cursor.execute('''
+                CREATE TABLE ventas (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    referencia_no TEXT NOT NULL UNIQUE,
+                    cliente_id INTEGER,
+                    fecha TEXT NOT NULL,
+                    total REAL NOT NULL,
+                    estado TEXT DEFAULT 'Emitido',
+                    FOREIGN KEY (cliente_id) REFERENCES clientes (id)
+                )
+            ''')
+            
+            # Agrupar ventas por referencia_no
+            ventas_agrupadas = {}
+            for row in ventas_antiguas:
+                ref_no = str(row[0])  # referencia_no como string
+                if ref_no not in ventas_agrupadas:
+                    ventas_agrupadas[ref_no] = {
+                        'cliente_id': row[1],
+                        'fecha': row[2],
+                        'productos': [],
+                        'total': 0
+                    }
+                ventas_agrupadas[ref_no]['productos'].append({
+                    'producto_id': row[3],
+                    'cantidad': row[4],
+                    'precio_unitario': row[5],
+                    'subtotal': row[6]
+                })
+                ventas_agrupadas[ref_no]['total'] += row[6]
+            
+            # Insertar en nueva estructura
+            for ref_no, venta_data in ventas_agrupadas.items():
+                # Insertar encabezado
+                cursor.execute("""
+                    INSERT INTO ventas (referencia_no, cliente_id, fecha, total, estado)
+                    VALUES (?, ?, ?, ?, 'Emitido')
+                """, (ref_no, venta_data['cliente_id'], venta_data['fecha'], venta_data['total']))
+                
+                venta_id = cursor.lastrowid
+                
+                # Insertar detalles
+                for producto in venta_data['productos']:
+                    cursor.execute("""
+                        INSERT INTO ventas_detalle (venta_id, producto_id, cantidad, precio_unitario, subtotal)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (venta_id, producto['producto_id'], producto['cantidad'], 
+                          producto['precio_unitario'], producto['subtotal']))
+            
+            # Opcional: Eliminar tabla antigua (comentar si quieres mantener backup)
+            # cursor.execute("DROP TABLE ventas_old")
+            
+            print(f"✅ Migración completada: {len(ventas_agrupadas)} ventas migradas a nueva estructura")
+            
+        except Exception as e:
+            print(f"⚠️ Error en migración de ventas: {e}")
+            # No hacer rollback, solo reportar el error
     
     # MÉTODOS PARA PROVEEDORES
     def crear_proveedor(self, nombre: str, nit_dpi: str, direccion: str, telefono: str = "") -> int:
@@ -285,15 +435,15 @@ class DatabaseManager:
             return cursor.rowcount
     
     # MÉTODOS PARA PRODUCTOS
-    def crear_producto(self, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '') -> int:
-        """Crea un nuevo producto con datos adicionales del SKU"""
+    def crear_producto(self, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '', dibujo: str = '', cod_color: str = '') -> int:
+        """Crea un nuevo producto con datos adicionales del SKU completo"""
         precio_venta = round(precio_compra * (1 + porcentaje_ganancia / 100), 2)
         monto_ganancia = round(precio_venta - precio_compra, 2)
         query = '''
-            INSERT INTO productos (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO productos (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño, dibujo, cod_color)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''
-        return self.execute_insert(query, (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño))
+        return self.execute_insert(query, (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño, dibujo, cod_color))
     
     def obtener_productos(self) -> List[Dict]:
         """Obtiene todos los productos ordenados por ID ascendente"""
@@ -321,16 +471,16 @@ class DatabaseManager:
         resultado = self.execute_query(query, (producto_id,))
         return resultado[0] if resultado else None
     
-    def actualizar_producto(self, producto_id: int, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = ''):
-        """Actualiza un producto con datos adicionales del SKU"""
+    def actualizar_producto(self, producto_id: int, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '', dibujo: str = '', cod_color: str = ''):
+        """Actualiza un producto con datos adicionales del SKU completo"""
         precio_venta = round(precio_compra * (1 + porcentaje_ganancia / 100), 2)
         monto_ganancia = round(precio_venta - precio_compra, 2)
         query = '''
             UPDATE productos 
-            SET codigo = ?, nombre = ?, categoria = ?, precio_compra = ?, porcentaje_ganancia = ?, precio_venta = ?, monto_ganancia = ?, marca = ?, color = ?, tamaño = ?
+            SET codigo = ?, nombre = ?, categoria = ?, precio_compra = ?, porcentaje_ganancia = ?, precio_venta = ?, monto_ganancia = ?, marca = ?, color = ?, tamaño = ?, dibujo = ?, cod_color = ?
             WHERE id = ?
         '''
-        return self.execute_update(query, (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño, producto_id))
+        return self.execute_update(query, (codigo, nombre, categoria, precio_compra, porcentaje_ganancia, precio_venta, monto_ganancia, marca, color, tamaño, dibujo, cod_color, producto_id))
     
     def actualizar_stock(self, producto_id: int, nuevo_stock: int):
         """Actualiza el stock de un producto"""
@@ -383,12 +533,8 @@ class DatabaseManager:
             # Registrar movimiento de stock
             self.registrar_movimiento_stock(producto_id, 'entrada', cantidad, 'compra')
             
-            # Registrar movimiento de caja (EGRESO por compra)
-            proveedor = self.obtener_proveedor_por_id(proveedor_id)
-            concepto = f"Compra de {producto['nombre']} - Doc: {no_documento}"
-            if proveedor:
-                concepto += f" - Proveedor: {proveedor['nombre']}"
-            self.registrar_movimiento_caja('EGRESO', 'COMPRA', concepto, total, fecha_manual)
+            # NOTA: El movimiento de caja se registra ahora en inventario_controller.py
+            # para tener un control centralizado de los movimientos de caja
         
         return compra_id
     
@@ -470,51 +616,135 @@ class DatabaseManager:
             return False
     
     # MÉTODOS PARA VENTAS
+    # MÉTODOS PARA VENTAS (NUEVO SISTEMA CON CARRITO)
+    def registrar_venta_con_carrito(self, cliente_id: int, productos_carrito: List[Dict], fecha_manual: str) -> Tuple[bool, str]:
+        """
+        Registra una venta con múltiples productos (carrito de compras)
+        productos_carrito: Lista de diccionarios con {producto_id, cantidad, precio_unitario}
+        fecha_manual debe estar en formato 'dd/mm/yyyy HH:MM:SS' o 'dd/mm/yyyy'
+        """
+        if not productos_carrito:
+            return False, "El carrito está vacío"
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Validar stock para todos los productos antes de proceder
+                for item in productos_carrito:
+                    cursor.execute('SELECT nombre, stock_actual FROM productos WHERE id = ?', (item['producto_id'],))
+                    producto = cursor.fetchone()
+                    if not producto:
+                        return False, f"Producto ID {item['producto_id']} no encontrado"
+                    
+                    if producto[1] < item['cantidad']:
+                        return False, f"Stock insuficiente para {producto[0]}. Disponible: {producto[1]}"
+                
+                # Obtener el siguiente número de referencia
+                cursor.execute('SELECT MAX(id) FROM ventas')
+                max_id = cursor.fetchone()[0]
+                siguiente_num = (max_id + 1) if max_id else 1
+                referencia_no = f"REF{siguiente_num:06d}"
+                
+                # Calcular total general
+                total_general = sum(item['cantidad'] * item['precio_unitario'] for item in productos_carrito)
+                total_general = round(total_general, 2)
+                
+                # Insertar encabezado de venta
+                cursor.execute('''
+                    INSERT INTO ventas (referencia_no, cliente_id, fecha, total, estado)
+                    VALUES (?, ?, ?, ?, 'Emitido')
+                ''', (referencia_no, cliente_id, fecha_manual, total_general))
+                
+                venta_id = cursor.lastrowid
+                
+                # Lista para el concepto de movimiento de caja
+                productos_nombres = []
+                
+                # Procesar cada producto del carrito
+                for item in productos_carrito:
+                    producto_id = item['producto_id']
+                    cantidad = item['cantidad']
+                    precio_unitario = item['precio_unitario']
+                    subtotal = round(cantidad * precio_unitario, 2)
+                    
+                    # Obtener nombre del producto
+                    cursor.execute('SELECT nombre, stock_actual FROM productos WHERE id = ?', (producto_id,))
+                    producto_data = cursor.fetchone()
+                    producto_nombre = producto_data[0]
+                    stock_actual = producto_data[1]
+                    
+                    # Insertar detalle de venta
+                    cursor.execute('''
+                        INSERT INTO ventas_detalle (venta_id, producto_id, cantidad, precio_unitario, subtotal)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (venta_id, producto_id, cantidad, precio_unitario, subtotal))
+                    
+                    # Aplicar PEPS para descontar de compras más antiguas (dentro del mismo cursor)
+                    cursor.execute('''
+                        SELECT id, cantidad, COALESCE(cantidad_disponible, cantidad) as disponible
+                        FROM compras 
+                        WHERE producto_id = ? AND COALESCE(cantidad_disponible, cantidad) > 0
+                        ORDER BY fecha ASC
+                    ''', (producto_id,))
+                    compras = cursor.fetchall()
+                    
+                    cantidad_restante = cantidad
+                    for compra in compras:
+                        if cantidad_restante <= 0:
+                            break
+                        
+                        compra_id, cantidad_compra, disponible = compra
+                        
+                        if disponible >= cantidad_restante:
+                            nueva_disponible = disponible - cantidad_restante
+                            cursor.execute('UPDATE compras SET cantidad_disponible = ? WHERE id = ?',
+                                         (nueva_disponible, compra_id))
+                            cantidad_restante = 0
+                        else:
+                            cursor.execute('UPDATE compras SET cantidad_disponible = 0 WHERE id = ?',
+                                         (compra_id,))
+                            cantidad_restante -= disponible
+                    
+                    # Actualizar stock total del producto
+                    nuevo_stock = stock_actual - cantidad
+                    cursor.execute('UPDATE productos SET stock_actual = ? WHERE id = ?', (nuevo_stock, producto_id))
+                    print(f"DEBUG: Producto {producto_nombre} - Stock anterior: {stock_actual}, Vendido: {cantidad}, Nuevo stock: {nuevo_stock}")
+                    
+                    # Registrar movimiento de stock
+                    cursor.execute('''
+                        INSERT INTO movimientos_stock (producto_id, tipo, cantidad, motivo)
+                        VALUES (?, 'salida', ?, 'venta')
+                    ''', (producto_id, cantidad))
+                    
+                    # Agregar nombre para el concepto
+                    productos_nombres.append(producto_nombre)
+                
+                # NOTA: El movimiento de caja se registra ahora en inventario_controller.py
+                # para tener un control centralizado de los movimientos de caja
+                
+                conn.commit()
+                
+                return True, f"✅ Venta registrada exitosamente\n\n📋 Referencia: {referencia_no}\n🆔 ID: {venta_id}\n🛒 Productos: {len(productos_carrito)}\n💰 Total: Q {total_general:,.2f}"
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return False, f"Error al registrar venta: {str(e)}"
+    
+    # Método antiguo mantenido para compatibilidad (llama al nuevo método)
     def registrar_venta(self, producto_id: int, cantidad: int, precio_unitario: float,
                        cliente_id: int, fecha_manual: str) -> Tuple[bool, str]:
         """
-        Registra una venta y actualiza el stock usando método PEPS
-        (Primeras Entradas, Primeras Salidas)
-        fecha_manual debe estar en formato 'dd/mm/yyyy HH:MM:SS' o 'dd/mm/yyyy'
-        El referencia_no se genera automáticamente
+        MÉTODO LEGACY: Registra una venta de un solo producto
+        Internamente usa el nuevo sistema de carrito con un solo item
         """
-        producto = self.obtener_producto_por_id(producto_id)
-        if not producto:
-            return False, "Producto no encontrado"
-        
-        if producto['stock_actual'] < cantidad:
-            return False, f"Stock insuficiente. Disponible: {producto['stock_actual']}"
-        
-        # Obtener el siguiente número de referencia
-        referencia_no = self.obtener_siguiente_referencia()
-        total = round(cantidad * precio_unitario, 2)
-        
-        # Insertar venta
-        query_venta = '''
-            INSERT INTO ventas (referencia_no, producto_id, cantidad, precio_unitario, total, fecha, cliente_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        '''
-        venta_id = self.execute_insert(query_venta, (referencia_no, producto_id, cantidad, 
-                                                     precio_unitario, total, fecha_manual, cliente_id))
-        
-        # APLICAR MÉTODO PEPS: Descontar de las compras más antiguas primero
-        self.aplicar_peps(producto_id, cantidad)
-        
-        # Actualizar stock total del producto
-        nuevo_stock = producto['stock_actual'] - cantidad
-        self.actualizar_stock(producto_id, nuevo_stock)
-        
-        # Registrar movimiento de stock
-        self.registrar_movimiento_stock(producto_id, 'salida', cantidad, 'venta')
-        
-        # Registrar movimiento de caja (INGRESO por venta)
-        cliente = self.obtener_cliente_por_id(cliente_id)
-        concepto = f"Venta de {producto['nombre']} - Ref: {referencia_no}"
-        if cliente:
-            concepto += f" - Cliente: {cliente['nombre']}"
-        self.registrar_movimiento_caja('INGRESO', 'VENTA', concepto, total, fecha_manual)
-        
-        return True, f"Venta registrada con Referencia: {referencia_no}"
+        carrito = [{
+            'producto_id': producto_id,
+            'cantidad': cantidad,
+            'precio_unitario': precio_unitario
+        }]
+        return self.registrar_venta_con_carrito(cliente_id, carrito, fecha_manual)
     
     def aplicar_peps(self, producto_id: int, cantidad_vendida: int):
         """
@@ -579,19 +809,131 @@ class DatabaseManager:
         return f"REF{siguiente_num:06d}"  # REF000001, REF000002, etc.
     
     def obtener_ventas(self) -> List[Dict]:
-        """Obtiene todas las ventas con información del producto y cliente"""
+        """Obtiene todas las ventas con información del cliente y detalles de productos"""
         query = '''
-            SELECT v.*, 
-                   COALESCE(p.nombre, '[Producto Eliminado - ID: ' || v.producto_id || ']') as producto_nombre,
-                   COALESCE(p.codigo, '') as producto_codigo,
+            SELECT v.id, v.referencia_no, v.cliente_id, v.fecha, v.total, v.estado,
                    COALESCE(c.nombre, '[Cliente Eliminado]') as cliente_nombre,
                    COALESCE(c.nit_dpi, '') as cliente_nit
             FROM ventas v
-            LEFT JOIN productos p ON v.producto_id = p.id
             LEFT JOIN clientes c ON v.cliente_id = c.id
-            ORDER BY v.id ASC
+            ORDER BY v.id DESC
         '''
-        return self.execute_query(query)
+        ventas = self.execute_query(query)
+        
+        # Obtener detalles de cada venta
+        for venta in ventas:
+            query_detalle = '''
+                SELECT vd.*, 
+                       COALESCE(p.nombre, '[Producto Eliminado]') as producto_nombre,
+                       COALESCE(p.codigo, '') as producto_codigo
+                FROM ventas_detalle vd
+                LEFT JOIN productos p ON vd.producto_id = p.id
+                WHERE vd.venta_id = ?
+                ORDER BY vd.id
+            '''
+            detalles = self.execute_query(query_detalle, (venta['id'],))
+            venta['detalles'] = detalles
+            
+            # Agregar conteo de productos
+            venta['cantidad_productos'] = len(detalles)
+            
+        return ventas
+    
+    def obtener_venta_por_id(self, venta_id: int) -> Optional[Dict]:
+        """Obtiene una venta específica con todos sus detalles"""
+        query = '''
+            SELECT v.*, 
+                   COALESCE(c.nombre, '[Cliente Eliminado]') as cliente_nombre,
+                   COALESCE(c.nit_dpi, '') as cliente_nit,
+                   COALESCE(c.direccion, '') as cliente_direccion,
+                   COALESCE(c.telefono, '') as cliente_telefono
+            FROM ventas v
+            LEFT JOIN clientes c ON v.cliente_id = c.id
+            WHERE v.id = ?
+        '''
+        resultado = self.execute_query(query, (venta_id,))
+        
+        if not resultado:
+            return None
+        
+        venta = resultado[0]
+        
+        # Obtener detalles
+        query_detalle = '''
+            SELECT vd.*, 
+                   COALESCE(p.nombre, '[Producto Eliminado]') as producto_nombre,
+                   COALESCE(p.codigo, '') as producto_codigo
+            FROM ventas_detalle vd
+            LEFT JOIN productos p ON vd.producto_id = p.id
+            WHERE vd.venta_id = ?
+        '''
+        venta['detalles'] = self.execute_query(query_detalle, (venta_id,))
+        
+        return venta
+    
+    def anular_venta(self, venta_id: int) -> tuple:
+        """
+        Anula una venta:
+        1. Cambia el estado a 'Anulado'
+        2. Devuelve los productos al inventario
+        3. Registra movimientos de stock
+        """
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Verificar que la venta existe y no está anulada
+            cursor.execute('SELECT estado FROM ventas WHERE id = ?', (venta_id,))
+            resultado = cursor.fetchone()
+            
+            if not resultado:
+                return False, "Venta no encontrada"
+            
+            if resultado[0] == 'Anulado':
+                return False, "La venta ya está anulada"
+            
+            # Obtener detalles de la venta para devolver productos
+            cursor.execute('''
+                SELECT producto_id, cantidad 
+                FROM ventas_detalle 
+                WHERE venta_id = ?
+            ''', (venta_id,))
+            
+            detalles = cursor.fetchall()
+            
+            # Devolver productos al inventario
+            for producto_id, cantidad in detalles:
+                # Aumentar stock
+                cursor.execute('''
+                    UPDATE productos 
+                    SET stock_actual = stock_actual + ? 
+                    WHERE id = ?
+                ''', (cantidad, producto_id))
+                
+                # Registrar movimiento de stock
+                cursor.execute('''
+                    INSERT INTO movimientos_stock (producto_id, tipo, cantidad, motivo, fecha)
+                    VALUES (?, 'entrada', ?, 'Devolución por anulación de venta', datetime('now', 'localtime'))
+                ''', (producto_id, cantidad))
+            
+            # Cambiar estado de la venta a Anulado
+            cursor.execute('''
+                UPDATE ventas 
+                SET estado = 'Anulado'
+                WHERE id = ?
+            ''', (venta_id,))
+            
+            conn.commit()
+            return True, f"Venta anulada exitosamente. {len(detalles)} productos devueltos al inventario."
+            
+        except sqlite3.Error as e:
+            if conn:
+                conn.rollback()
+            return False, f"Error al anular venta: {str(e)}"
+        finally:
+            if conn:
+                conn.close()
     
     # MÉTODOS PARA MOVIMIENTOS DE STOCK
     def registrar_movimiento_stock(self, producto_id: int, tipo: str, cantidad: int, motivo: str):
@@ -630,8 +972,8 @@ class DatabaseManager:
         return resultado[0]['total'] if resultado else 0
     
     def obtener_total_ventas(self) -> float:
-        """Obtiene el total de todas las ventas"""
-        query = 'SELECT COALESCE(SUM(total), 0) as total FROM ventas'
+        """Obtiene el total de todas las ventas activas (no anuladas)"""
+        query = "SELECT COALESCE(SUM(total), 0) as total FROM ventas WHERE estado != 'Anulado'"
         resultado = self.execute_query(query)
         return resultado[0]['total'] if resultado else 0
     
@@ -639,9 +981,20 @@ class DatabaseManager:
         """Obtiene un resumen completo del inventario"""
         total_compras = self.obtener_total_compras()
         total_ventas = self.obtener_total_ventas()
-        ganancia_bruta = total_ventas - total_compras
         
-        # Valor actual del inventario
+        # GANANCIA BRUTA REAL: Suma de (precio_venta - precio_compra) * cantidad vendida
+        # Solo considerar ventas no anuladas
+        query_ganancia = '''
+            SELECT COALESCE(SUM((vd.precio_unitario - p.precio_compra) * vd.cantidad), 0) as ganancia_bruta
+            FROM ventas_detalle vd
+            INNER JOIN ventas v ON vd.venta_id = v.id
+            INNER JOIN productos p ON vd.producto_id = p.id
+            WHERE v.estado != 'Anulado'
+        '''
+        resultado_ganancia = self.execute_query(query_ganancia)
+        ganancia_bruta = resultado_ganancia[0]['ganancia_bruta'] if resultado_ganancia else 0
+        
+        # Valor actual del inventario (stock * precio_compra)
         query_inventario = '''
             SELECT COALESCE(SUM(p.stock_actual * p.precio_compra), 0) as valor_inventario
             FROM productos p
@@ -649,12 +1002,15 @@ class DatabaseManager:
         resultado = self.execute_query(query_inventario)
         valor_inventario = resultado[0]['valor_inventario'] if resultado else 0
         
+        # Saldo en banco = Saldo actual de caja (ingresos - egresos reales)
+        saldo_banco = self.obtener_saldo_caja()
+        
         return {
             'total_compras': total_compras,
             'total_ventas': total_ventas,
             'ganancia_bruta': ganancia_bruta,
             'valor_inventario': valor_inventario,
-            'saldo_banco': total_ventas  # Asumiendo que todas las ventas van al banco
+            'saldo_banco': saldo_banco
         }
     
     # MÉTODOS PARA MOVIMIENTOS DE CAJA

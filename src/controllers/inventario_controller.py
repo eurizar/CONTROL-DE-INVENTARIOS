@@ -21,8 +21,8 @@ class InventarioController:
         self.db = DatabaseManager(db_path)
     
     # GESTIÓN DE PRODUCTOS
-    def crear_producto(self, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '') -> Tuple[bool, str]:
-        """Crea un nuevo producto con datos adicionales del SKU"""
+    def crear_producto(self, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '', dibujo: str = '', cod_color: str = '') -> Tuple[bool, str]:
+        """Crea un nuevo producto con datos adicionales del SKU completo"""
         try:
             if not nombre.strip():
                 return False, "El nombre del producto no puede estar vacío"
@@ -33,7 +33,7 @@ class InventarioController:
             if porcentaje_ganancia < 0:
                 return False, "El porcentaje de ganancia no puede ser negativo"
             
-            producto_id = self.db.crear_producto(codigo.strip() if codigo else "", nombre.strip(), categoria.strip() if categoria else "", precio_compra, porcentaje_ganancia, marca.strip(), color.strip(), tamaño.strip())
+            producto_id = self.db.crear_producto(codigo.strip() if codigo else "", nombre.strip(), categoria.strip() if categoria else "", precio_compra, porcentaje_ganancia, marca.strip(), color.strip(), tamaño.strip(), dibujo.strip(), cod_color.strip())
             return True, f"Producto creado con ID: {producto_id}"
         
         except Exception as e:
@@ -49,8 +49,8 @@ class InventarioController:
         """Obtiene un producto por su ID"""
         return self.db.obtener_producto_por_id(producto_id)
     
-    def actualizar_producto(self, producto_id: int, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '') -> Tuple[bool, str]:
-        """Actualiza un producto existente con datos adicionales del SKU"""
+    def actualizar_producto(self, producto_id: int, codigo: str, nombre: str, categoria: str, precio_compra: float, porcentaje_ganancia: float, marca: str = '', color: str = '', tamaño: str = '', dibujo: str = '', cod_color: str = '') -> Tuple[bool, str]:
+        """Actualiza un producto existente con datos adicionales del SKU completo"""
         try:
             if not nombre.strip():
                 return False, "El nombre del producto no puede estar vacío"
@@ -61,7 +61,7 @@ class InventarioController:
             if porcentaje_ganancia < 0:
                 return False, "El porcentaje de ganancia no puede ser negativo"
             
-            filas_afectadas = self.db.actualizar_producto(producto_id, codigo.strip() if codigo else "", nombre.strip(), categoria.strip() if categoria else "", precio_compra, porcentaje_ganancia, marca.strip(), color.strip(), tamaño.strip())
+            filas_afectadas = self.db.actualizar_producto(producto_id, codigo.strip() if codigo else "", nombre.strip(), categoria.strip() if categoria else "", precio_compra, porcentaje_ganancia, marca.strip(), color.strip(), tamaño.strip(), dibujo.strip(), cod_color.strip())
             
             if filas_afectadas > 0:
                 return True, "Producto actualizado correctamente"
@@ -138,6 +138,14 @@ class InventarioController:
             compra_id = self.db.registrar_compra(producto_id, cantidad, precio_unitario,
                                                 proveedor_id, no_documento, fecha_manual,
                                                 es_perecedero, fecha_vencimiento)
+            
+            # Calcular total de la compra
+            total_compra = cantidad * precio_unitario
+            
+            # Registrar EGRESO en caja
+            concepto = f"Compra #{compra_id} - Proveedor: {proveedor['nombre']} - Doc: {no_documento}"
+            self.registrar_movimiento_caja('EGRESO', 'COMPRA_MERCADERIA', concepto, total_compra, fecha_manual)
+            
             return True, f"Compra registrada con ID: {compra_id}"
         
         except Exception as e:
@@ -166,10 +174,65 @@ class InventarioController:
             return False, f"Error: {str(e)}"
     
     # GESTIÓN DE VENTAS
+    # GESTIÓN DE VENTAS
+    def registrar_venta_con_carrito(self, cliente_id: int, productos_carrito: List[Dict], fecha_manual: str) -> Tuple[bool, str]:
+        """
+        Registra una venta con múltiples productos (carrito)
+        productos_carrito: Lista de diccionarios con {producto_id, cantidad, precio_unitario}
+        fecha_manual debe estar en formato 'dd/mm/yyyy HH:MM:SS' o 'dd/mm/yyyy'
+        """
+        try:
+            if not productos_carrito:
+                return False, "El carrito está vacío"
+            
+            # Validar cliente
+            cliente = self.db.obtener_cliente_por_id(cliente_id)
+            if not cliente:
+                return False, "Cliente no encontrado"
+            
+            # Validar productos
+            for item in productos_carrito:
+                if item['cantidad'] <= 0:
+                    return False, f"La cantidad debe ser mayor a 0"
+                
+                if item['precio_unitario'] <= 0:
+                    return False, f"El precio debe ser mayor a 0"
+            
+            exito, mensaje = self.db.registrar_venta_con_carrito(cliente_id, productos_carrito, fecha_manual)
+            
+            if exito:
+                # Calcular total de la venta (con descuentos aplicados)
+                total_venta = sum(item['cantidad'] * item['precio_unitario'] for item in productos_carrito)
+                
+                # Extraer ID y referencia de la venta del mensaje
+                venta_id = 'N/A'
+                referencia = 'N/A'
+                
+                if 'ID:' in mensaje:
+                    try:
+                        venta_id = mensaje.split('ID: ')[1].split('\n')[0].strip()
+                    except:
+                        pass
+                
+                if 'Referencia:' in mensaje:
+                    try:
+                        referencia = mensaje.split('Referencia: ')[1].split('\n')[0].strip()
+                    except:
+                        pass
+                
+                # Registrar INGRESO en caja con número de venta
+                concepto = f"Venta #{venta_id} ({referencia}) - Cliente: {cliente['nombre']}"
+                self.registrar_movimiento_caja('INGRESO', 'VENTA', concepto, total_venta, fecha_manual)
+            
+            return exito, mensaje
+        
+        except Exception as e:
+            return False, f"Error al registrar venta: {str(e)}"
+    
     def registrar_venta(self, producto_id: int, cantidad: int, precio_unitario: float,
                        cliente_id: int, fecha_manual: str) -> Tuple[bool, str]:
         """
-        Registra una nueva venta
+        Registra una nueva venta (UN SOLO PRODUCTO - método legacy)
         fecha_manual debe estar en formato 'dd/mm/yyyy HH:MM:SS' o 'dd/mm/yyyy'
         El número de referencia se genera automáticamente
         """
@@ -196,6 +259,50 @@ class InventarioController:
         """Obtiene todas las ventas"""
         return self.db.obtener_ventas()
     
+    def obtener_venta_por_id(self, venta_id: int) -> Optional[Dict]:
+        """Obtiene una venta específica con todos sus detalles"""
+        return self.db.obtener_venta_por_id(venta_id)
+    
+    def anular_venta(self, venta_id: int) -> Tuple[bool, str]:
+        """
+        Anula una venta y devuelve los productos al inventario.
+        Cambia el estado a 'Anulado' y restaura el stock.
+        Registra un EGRESO en caja (devolución al cliente).
+        """
+        try:
+            # Obtener venta
+            venta = self.db.obtener_venta_por_id(venta_id)
+            
+            if not venta:
+                return False, "Venta no encontrada"
+            
+            if venta['estado'] == 'Anulado':
+                return False, "La venta ya está anulada"
+            
+            # Calcular total de la venta antes de anular
+            total_venta = sum(detalle['cantidad'] * detalle['precio_unitario'] 
+                             for detalle in venta['detalles'])
+            
+            # Anular en la base de datos
+            exito, mensaje = self.db.anular_venta(venta_id)
+            
+            if exito:
+                # Obtener datos del cliente
+                cliente = self.db.obtener_cliente_por_id(venta['cliente_id'])
+                cliente_nombre = cliente['nombre'] if cliente else 'Desconocido'
+                
+                # Registrar EGRESO en caja (devolución)
+                concepto = f"Devolución Venta #{venta_id} - Cliente: {cliente_nombre}"
+                self.registrar_movimiento_caja('EGRESO', 'DEVOLUCION_VENTA', concepto, total_venta)
+                
+                productos_devueltos = len(venta['detalles'])
+                return True, f"Venta anulada. Productos devueltos: {productos_devueltos}. Dinero devuelto: Q {total_venta:.2f}"
+            else:
+                return False, mensaje
+                
+        except Exception as e:
+            return False, f"Error al anular venta: {str(e)}"
+    
     # GESTIÓN DE PROVEEDORES
     def crear_proveedor(self, nombre: str, nit_dpi: str, direccion: str, telefono: str = "") -> Tuple[bool, str]:
         """Crea un nuevo proveedor"""
@@ -205,9 +312,6 @@ class InventarioController:
             
             if not nit_dpi.strip():
                 return False, "El NIT o DPI es obligatorio"
-            
-            if not direccion.strip():
-                return False, "La dirección es obligatoria"
             
             proveedor_id = self.db.crear_proveedor(nombre.strip(), nit_dpi.strip(), 
                                                    direccion.strip(), telefono.strip())
@@ -242,9 +346,6 @@ class InventarioController:
             if not nit_dpi.strip():
                 return False, "El NIT o DPI es obligatorio"
             
-            if not direccion.strip():
-                return False, "La dirección es obligatoria"
-            
             filas_afectadas = self.db.actualizar_proveedor(proveedor_id, nombre.strip(), 
                                                           nit_dpi.strip(), direccion.strip(), 
                                                           telefono.strip())
@@ -268,9 +369,6 @@ class InventarioController:
             
             if not nit_dpi.strip():
                 return False, "El NIT o DPI es obligatorio"
-            
-            if not direccion.strip():
-                return False, "La dirección es obligatoria"
             
             cliente_id = self.db.crear_cliente(nombre.strip(), nit_dpi.strip(), 
                                               direccion.strip(), telefono.strip())
@@ -304,9 +402,6 @@ class InventarioController:
             
             if not nit_dpi.strip():
                 return False, "El NIT o DPI es obligatorio"
-            
-            if not direccion.strip():
-                return False, "La dirección es obligatoria"
             
             filas_afectadas = self.db.actualizar_cliente(cliente_id, nombre.strip(), 
                                                         nit_dpi.strip(), direccion.strip(), 

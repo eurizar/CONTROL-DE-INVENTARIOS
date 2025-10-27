@@ -48,49 +48,18 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from src.controllers.inventario_controller import InventarioController
 from src.config.settings import Settings
 
-class ToolTip:
-    """Clase para crear tooltips personalizados"""
-    def __init__(self, widget):
-        self.widget = widget
-        self.tipwindow = None
-        self.id = None
-        self.x = self.y = 0
+# Importar utilidades compartidas de UI
+from src.ui.utils import sort_treeview, centrar_ventana, agregar_icono, configurar_navegacion_calendario
 
-    def showtip(self, text, x, y):
-        """Muestra el tooltip en las coordenadas especificadas"""
-        self.text = text
-        if self.tipwindow or not self.text:
-            return
-        
-        # Crear ventana del tooltip
-        self.tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)  # Sin bordes de ventana
-        tw.wm_geometry(f"+{x}+{y}")
-        
-        # Frame con bordes y estilo
-        frame = tk.Frame(tw, background="#ffffe0", relief='solid', borderwidth=1)
-        frame.pack()
-        
-        label = tk.Label(
-            frame, 
-            text=self.text, 
-            justify='left',
-            background="#ffffe0", 
-            foreground="#000000",
-            relief='flat', 
-            borderwidth=0,
-            font=('Segoe UI', 9),
-            padx=10,
-            pady=8
-        )
-        label.pack()
-
-    def hidetip(self):
-        """Oculta el tooltip"""
-        tw = self.tipwindow
-        self.tipwindow = None
-        if tw:
-            tw.destroy()
+# Importar los módulos refactorizados
+from src.ui.tabs.ventas_tab import VentasTab
+from src.ui.tabs.compras_tab import ComprasTab
+from src.ui.tabs.productos_tab import ProductosTab
+from src.ui.tabs.clientes_tab import ClientesTab
+from src.ui.tabs.proveedores_tab import ProveedoresTab
+from src.ui.tabs.caja_tab import CajaTab
+from src.ui.tabs.reportes_tab import ReportesTab
+from src.ui.tabs.configuracion_tab import ConfiguracionTab
 
 class MainWindow:
     def __init__(self):
@@ -105,8 +74,8 @@ class MainWindow:
         self.root.withdraw()
         
         # Configurar tamaño
-        ancho_ventana = 1400
-        alto_ventana = 850
+        ancho_ventana = 1500
+        alto_ventana = 900
         self.root.geometry(f"{ancho_ventana}x{alto_ventana}")
         
         # Configurar icono
@@ -157,7 +126,7 @@ class MainWindow:
         self.producto_precio_compra = tk.DoubleVar()
         self.producto_ganancia = tk.DoubleVar()
         self.producto_precio_venta_manual = tk.DoubleVar()
-        self.producto_tipo_calculo = tk.StringVar(value="porcentaje")  # 'porcentaje' o 'precio'
+        self.producto_tipo_calculo = tk.StringVar(value="precio")  # 'precio' por defecto (antes 'porcentaje')
         
         # Variables para proveedor
         self.proveedor_nombre = tk.StringVar()
@@ -184,11 +153,14 @@ class MainWindow:
         self.compra_fecha_vencimiento = tk.StringVar()
         
         # Variables para venta
-        self.venta_cantidad = tk.IntVar()
+        self.venta_cantidad = tk.IntVar(value=1)  # Iniciar en 1 por defecto
         self.venta_precio = tk.DoubleVar()
         self.venta_fecha = tk.StringVar()
         self.venta_producto_busqueda = tk.StringVar()
         self.venta_cliente_busqueda = tk.StringVar()
+        self.venta_cliente_nit = tk.StringVar()  # Campo para NIT/DPI o CF
+        self.venta_cliente_direccion = tk.StringVar()  # Campo para Dirección
+        self.venta_cliente_telefono = tk.StringVar()  # Campo para Teléfono
         
         # Variables para caja
         self.caja_tipo = tk.StringVar(value='EGRESO')
@@ -204,6 +176,9 @@ class MainWindow:
         self.compra_proveedor_id = None
         self.venta_producto_id = None
         self.venta_cliente_id = None
+        
+        # Variables para el carrito de ventas
+        self.carrito_ventas = []  # Lista de productos en el carrito
         
         # Variables para guardar datos del generador SKU
         self.sku_data = {
@@ -245,46 +220,85 @@ class MainWindow:
         current_theme = self.root.style.theme.name
         hover_color = self.get_theme_hover_color(current_theme)
         
-        # Configurar colores de selección según el tema
+        # Configurar colores de selección según el tema - MÁS VISIBLES
         theme_selection_colors = {
             'cosmo': '#2780e3',      # Azul Cosmo
-            'flatly': '#4a5568',     # Gris oscuro para Flatly
-            'minty': '#78c2ad',      # Verde menta Minty
-            'yeti': '#008cba',       # Azul Yeti
+            'flatly': '#5a6c7d',     # Gris más oscuro para Flatly
+            'minty': '#4CAF50',      # Verde más fuerte para Minty
+            'yeti': '#007ba7',       # Azul más oscuro Yeti
         }
         
         bg_color = theme_selection_colors.get(current_theme.lower(), '#0078d4')
         
-        # Configurar el estilo de selección para Treeview
+        # Configurar el estilo de selección para Treeview - MÁS VISIBLE
         style.map('Treeview',
-            background=[('selected', bg_color)],
-            foreground=[('selected', 'white')]
+            background=[('selected', bg_color), ('active', bg_color)],
+            foreground=[('selected', 'white'), ('active', 'white')]
+        )
+        
+        # Asegurar que el foco también sea visible
+        style.configure('Treeview',
+            fieldbackground='white',
+            background='white'
         )
     
     def centrar_ventana(self, ventana):
-        """Centra una ventana en la pantalla"""
-        ventana.update_idletasks()
-        ancho_ventana = ventana.winfo_width()
-        alto_ventana = ventana.winfo_height()
-        ancho_pantalla = ventana.winfo_screenwidth()
-        alto_pantalla = ventana.winfo_screenheight()
-        
-        x = (ancho_pantalla // 2) - (ancho_ventana // 2)
-        y = (alto_pantalla // 2) - (alto_ventana // 2)
-        
-        ventana.geometry(f'+{x}+{y}')
+        """Centra una ventana en la pantalla (delegado a utilidades)"""
+        centrar_ventana(ventana)
     
     def agregar_icono(self, ventana):
-        """Agrega el icono a una ventana"""
-        try:
-            icon_path = resource_path("inventario.ico")
-            if os.path.exists(icon_path):
-                ventana.iconbitmap(icon_path)
-        except Exception as e:
-            print(f"No se pudo cargar el icono: {e}")
-            pass
-        except:
-            pass
+        """Agrega el icono a una ventana (delegado a utilidades)"""
+        agregar_icono(ventana)
+    
+    def configurar_navegacion_calendario(self, date_entry):
+        """Configura navegación mejorada por año en un DateEntry (delegado a utilidades)"""
+        configurar_navegacion_calendario(date_entry)
+    
+    def crear_tooltip(self, widget, texto):
+        """Crea un tooltip para un widget"""
+        def mostrar_tooltip(event):
+            tooltip = tk.Toplevel()
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
+            
+            label = tk.Label(tooltip, text=texto, background="#ffffe0", 
+                           relief='solid', borderwidth=1, 
+                           font=('Segoe UI', 9), justify='left', padx=5, pady=5)
+            label.pack()
+            
+            def ocultar_tooltip(event=None):
+                tooltip.destroy()
+            
+            widget.tooltip = tooltip
+            widget.bind('<Leave>', ocultar_tooltip, add='+')
+            tooltip.bind('<Leave>', ocultar_tooltip)
+            
+            # Auto-ocultar después de 4 segundos
+            tooltip.after(4000, tooltip.destroy)
+        
+        def ocultar_si_existe(event):
+            if hasattr(widget, 'tooltip'):
+                try:
+                    widget.tooltip.destroy()
+                except:
+                    pass
+        
+        widget.bind('<Enter>', lambda e: [ocultar_si_existe(e), mostrar_tooltip(e)])
+    
+    def agregar_controles_año(self, date_entry):
+        """Agrega controles de navegación por año al calendario abierto"""
+        # Ya no se usa - mantenido para compatibilidad
+        pass
+    
+    def inyectar_botones_año(self, header_frame, date_entry, toplevel):
+        """Inyecta botones de navegación por año en el header del calendario"""
+        # Ya no se usa - mantenido para compatibilidad
+        pass
+    
+    def cambiar_año_calendario(self, date_entry, delta):
+        """Cambia el año del calendario"""
+        # Ya no se usa - mantenido para compatibilidad
+        pass
     
     def seleccionar_rango_fechas(self, titulo="Seleccionar Rango de Fechas"):
         """Muestra un diálogo para seleccionar rango de fechas"""
@@ -293,7 +307,7 @@ class MainWindow:
         
         dialog = tk.Toplevel(self.root)
         dialog.title(titulo)
-        dialog.geometry("450x220")
+        dialog.geometry("500x280")
         dialog.transient(self.root)
         
         # Ocultar ventana temporalmente para evitar parpadeo
@@ -304,9 +318,9 @@ class MainWindow:
         
         # Centrar diálogo
         dialog.update_idletasks()
-        x = (dialog.winfo_screenwidth() // 2) - (450 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (220 // 2)
-        dialog.geometry(f'450x220+{x}+{y}')
+        x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (280 // 2)
+        dialog.geometry(f'500x280+{x}+{y}')
         
         # Mostrar ventana ya centrada
         dialog.deiconify()
@@ -377,6 +391,10 @@ class MainWindow:
             bootstyle="secondary",
             width=15
         ).pack(side='left', padx=5)
+        
+        # Configurar navegación mejorada en calendarios
+        dialog.after(100, lambda: self.configurar_navegacion_calendario(fecha_inicio_cal))
+        dialog.after(100, lambda: self.configurar_navegacion_calendario(fecha_fin_cal))
         
         dialog.wait_window()
         return resultado
@@ -474,18 +492,52 @@ class MainWindow:
         hover_color = self.get_theme_hover_color(current_theme)
         style.map("Treeview", background=[("selected", hover_color)], foreground=[("selected", "white")])
         
-        # Crear las pestañas
-        self.create_productos_tab()
-        self.create_proveedores_tab()
-        self.create_clientes_tab()
-        self.create_compras_tab()
-        self.create_ventas_tab()
-        self.create_caja_tab()
-        self.create_reportes_tab()
-        self.create_configuracion_tab()
+        # Crear las pestañas usando las clases refactorizadas
+        self.crear_tabs_refactorizados()
         
         # Configurar efecto hover para todas las tablas
         self.setup_hover_effects()
+    
+    def crear_tabs_refactorizados(self):
+        """Crea todas las pestañas usando las clases refactorizadas"""
+        # Crear frames para cada tab
+        self.productos_frame = tb.Frame(self.notebook, bootstyle="light")
+        self.proveedores_frame = tb.Frame(self.notebook, bootstyle="light")
+        self.clientes_frame = tb.Frame(self.notebook, bootstyle="light")
+        self.compras_frame = tb.Frame(self.notebook, bootstyle="light")
+        self.ventas_frame = tb.Frame(self.notebook, bootstyle="light")
+        self.caja_frame = tb.Frame(self.notebook, bootstyle="light")
+        self.reportes_frame = tb.Frame(self.notebook, bootstyle="light")
+        self.config_frame = tb.Frame(self.notebook, bootstyle="light")
+        
+        # Agregar tabs al notebook
+        self.notebook.add(self.productos_frame, text="📦 Productos")
+        self.notebook.add(self.proveedores_frame, text="🏭 Proveedores")
+        self.notebook.add(self.clientes_frame, text="👥 Clientes")
+        self.notebook.add(self.compras_frame, text="🛒 Compras")
+        self.notebook.add(self.ventas_frame, text="💰 Ventas")
+        self.notebook.add(self.caja_frame, text="💵 Caja")
+        self.notebook.add(self.reportes_frame, text="📊 Reportes")
+        self.notebook.add(self.config_frame, text="⚙️ Configuración")
+        
+        # Instanciar las clases de tabs
+        self.productos_tab = ProductosTab(self.productos_frame, self.controller, self)
+        self.proveedores_tab = ProveedoresTab(self.proveedores_frame, self.controller, self)
+        self.clientes_tab = ClientesTab(self.clientes_frame, self.controller, self)
+        self.compras_tab = ComprasTab(self.compras_frame, self.controller, self)
+        self.ventas_tab = VentasTab(self.ventas_frame, self.controller, self)
+        self.caja_tab = CajaTab(self.caja_frame, self.controller, self)
+        self.reportes_tab = ReportesTab(self.reportes_frame, self.controller, self)
+        self.configuracion_tab = ConfiguracionTab(self.config_frame, self.controller, self)
+        
+        # Mantener referencias a los treeviews para hover effects
+        self.productos_tree = self.productos_tab.productos_tree
+        self.proveedores_tree = self.proveedores_tab.proveedores_tree
+        self.clientes_tree = self.clientes_tab.clientes_tree
+        self.compras_tree = self.compras_tab.compras_tree
+        self.ventas_tree = self.ventas_tab.ventas_tree
+        self.caja_tree = self.caja_tab.caja_tree
+        self.stock_tree = self.reportes_tab.stock_tree
     
     def setup_hover_effects(self):
         """Configura efecto hover ligero para todas las tablas"""
@@ -583,7 +635,7 @@ class MainWindow:
         # Título principal
         title_label = tb.Label(
             header, 
-            text="💼 SISTEMA DE CONTROL DE INVENTARIOS",
+            text="💼 SISTEMA DE CONTROL DE INVENTARIOS - MARTELIZ SHOP",
             font=('Segoe UI', 24, 'bold'),
             bootstyle="inverse-primary"
         )
@@ -608,11 +660,43 @@ class MainWindow:
             bootstyle="info-outline",
             width=12
         ).pack(side='left', padx=5)
+        
+        tb.Button(
+            quick_actions,
+            text="🚪 Salir",
+            command=self.salir_sistema,
+            bootstyle="danger",
+            width=10
+        ).pack(side='left', padx=5)
     
-    def create_productos_tab(self):
+    # FUNCIÓN OBSOLETA: create_productos_tab() - Movido a src/ui/tabs/productos_tab.py
+    
+    # FUNCIÓN OBSOLETA: create_compras_tab() - Movido a src/ui/tabs/compras_tab.py
+    
+    def create_compras_tab_OBSOLETO(self):
         """Crea la pestaña de gestión de productos"""
         self.productos_frame = tb.Frame(self.notebook, bootstyle="light")
         self.notebook.add(self.productos_frame, text="📦 Productos")
+        
+        # BOTÓN PRINCIPAL: INGRESAR NUEVO PRODUCTO (prominente al inicio)
+        boton_nuevo_frame = tb.Frame(self.productos_frame)
+        boton_nuevo_frame.pack(fill='x', padx=15, pady=(15, 10))
+        
+        tb.Button(
+            boton_nuevo_frame,
+            text="➕ INGRESAR NUEVO PRODUCTO",
+            command=self.abrir_generador_sku,
+            bootstyle="success",
+            width=35,
+            cursor="hand2"
+        ).pack(side='left', padx=5)
+        
+        tb.Label(
+            boton_nuevo_frame,
+            text="← Comience aquí para agregar productos con código SKU automático",
+            font=('Segoe UI', 9, 'italic'),
+            bootstyle="secondary"
+        ).pack(side='left', padx=10)
         
         # Frame para formulario de productos OPTIMIZADO
         form_frame = tb.Labelframe(
@@ -630,26 +714,16 @@ class MainWindow:
             font=('Segoe UI', 10, 'bold')
         ).grid(row=0, column=0, sticky='w', padx=5, pady=5)
         
-        codigo_frame = tb.Frame(form_frame)
-        codigo_frame.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
-        
+        # Campo de código (solo lectura, se genera automáticamente)
         self.codigo_entry = tb.Entry(
-            codigo_frame, 
+            form_frame, 
             textvariable=self.producto_codigo, 
             width=32,
             font=('Segoe UI', 11, 'bold'),
             state='disabled',
             cursor='arrow'
         )
-        self.codigo_entry.pack(side='left', padx=(0, 8))
-        
-        tb.Button(
-            codigo_frame,
-            text="🏷️ Generar Código SKU",
-            command=self.abrir_generador_sku,
-            bootstyle="info",
-            width=19
-        ).pack(side='left')
+        self.codigo_entry.grid(row=0, column=1, padx=5, pady=5, sticky='ew')
         
         tb.Label(
             form_frame, 
@@ -661,9 +735,13 @@ class MainWindow:
             form_frame, 
             textvariable=self.producto_nombre, 
             width=30,
-            font=('Segoe UI', 10)
+            font=('Segoe UI', 10),
+            state='readonly',
+            cursor='arrow'
         )
         self.producto_nombre_entry.grid(row=0, column=3, padx=5, pady=5, sticky='ew')
+        # Configurar colores para que sea visible pero claramente no editable
+        self.producto_nombre_entry.configure(foreground='#2c3e50', background='#ecf0f1')
         
         # FILA 2: Precio Compra y Categoría
         tb.Label(
@@ -687,12 +765,17 @@ class MainWindow:
             font=('Segoe UI', 10, 'bold')
         ).grid(row=1, column=2, sticky='w', padx=(20, 5), pady=5)
         
-        tb.Entry(
+        self.producto_categoria_entry = tb.Entry(
             form_frame, 
             textvariable=self.producto_categoria, 
             width=30,
-            font=('Segoe UI', 10)
-        ).grid(row=1, column=3, padx=5, pady=5, sticky='ew')
+            font=('Segoe UI', 10),
+            state='readonly',
+            cursor='arrow'
+        )
+        self.producto_categoria_entry.grid(row=1, column=3, padx=5, pady=5, sticky='ew')
+        # Configurar colores para que sea visible pero claramente no editable
+        self.producto_categoria_entry.configure(foreground='#2c3e50', background='#ecf0f1')
         
         # FILA 3: Radio buttons de método de cálculo
         tb.Label(
@@ -704,20 +787,21 @@ class MainWindow:
         radio_frame = tb.Frame(form_frame)
         radio_frame.grid(row=2, column=1, columnspan=3, padx=5, pady=5, sticky='w')
         
+        # CAMBIADO: Precio Venta primero, luego % Ganancia
         tb.Radiobutton(
             radio_frame,
-            text="% Ganancia",
+            text="Precio Venta",
             variable=self.producto_tipo_calculo,
-            value="porcentaje",
+            value="precio",
             command=self.cambiar_tipo_calculo,
             bootstyle="info"
         ).pack(side='left', padx=5)
         
         tb.Radiobutton(
             radio_frame,
-            text="Precio Venta",
+            text="% Ganancia",
             variable=self.producto_tipo_calculo,
-            value="precio",
+            value="porcentaje",
             command=self.cambiar_tipo_calculo,
             bootstyle="info"
         ).pack(side='left', padx=5)
@@ -779,6 +863,9 @@ class MainWindow:
         # Bind para calcular precio de venta automáticamente
         self.producto_precio_compra.trace('w', self.calcular_precio_venta)
         self.producto_ganancia.trace('w', self.calcular_precio_venta)
+        
+        # IMPORTANTE: Llamar a cambiar_tipo_calculo para establecer la vista inicial correcta
+        self.cambiar_tipo_calculo()
         
         # FILA 5: TODOS LOS BOTONES EN UNA SOLA LÍNEA (versión simplificada)
         buttons_frame = tb.Frame(form_frame)
@@ -864,6 +951,15 @@ class MainWindow:
             bootstyle="info"
         ).pack(side='left', padx=2)
         
+        # Botón "Ver Detalles del Producto"
+        tb.Button(
+            buttons_frame,
+            text="👁️ Ver Detalles",
+            command=self.ver_detalles_producto,
+            bootstyle="info-outline",
+            width=15
+        ).pack(side='right', padx=5)
+        
         # Lista de productos con diseño mejorado
         list_frame = tb.Labelframe(
             self.productos_frame, 
@@ -912,13 +1008,14 @@ class MainWindow:
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
         
-        # Bind para seleccionar producto
+        # Bind para seleccionar producto para edición (doble clic)
         self.productos_tree.bind('<Double-1>', self.seleccionar_producto)
         
-        # Bind para tooltip en hover sobre código SKU
-        self.productos_tree.bind('<Motion>', self.mostrar_tooltip_sku)
-        self.productos_tree.bind('<Leave>', self.ocultar_tooltip_sku)
-        self.tooltip_sku = None
+        # Bind para menú contextual con clic derecho
+        self.productos_tree.bind('<Button-3>', self.mostrar_menu_contextual_producto)
+        
+        # Ocultar la columna "Ganancia %" (no eliminarla para no afectar índices)
+        self.productos_tree.column('Ganancia %', width=0, stretch=False)
         
         # Agregar colores alternados a las filas
         self.productos_tree.tag_configure('evenrow', background='#f0f0f0')
@@ -1146,6 +1243,18 @@ class MainWindow:
         )
         list_frame.pack(fill='both', expand=True, padx=15, pady=(0, 15))
         
+        # Frame para búsqueda
+        search_frame = tb.Frame(list_frame)
+        search_frame.pack(fill='x', pady=(0, 10))
+        
+        tb.Label(search_frame, text="🔍 Buscar:", font=('Segoe UI', 10)).pack(side='left', padx=5)
+        self.compra_search = tb.Entry(search_frame, width=40)
+        self.compra_search.pack(side='left', padx=5)
+        self.compra_search.bind('<KeyRelease>', lambda e: self.refresh_compras())
+        
+        tb.Label(search_frame, text="Busca por: Proveedor, Producto, No. Doc o Fecha", 
+                font=('Segoe UI', 8, 'italic'), bootstyle="secondary").pack(side='left', padx=10)
+        
         # Treeview
         tree_frame = tb.Frame(list_frame)
         tree_frame.pack(fill='both', expand=True)
@@ -1189,6 +1298,9 @@ class MainWindow:
         self.compras_tree.tag_configure('critico_hover', background='#e69500', foreground='black')
         self.compras_tree.tag_configure('advertencia_hover', background='#e8c130', foreground='black')
         
+        # Agregar binding de click derecho para ver detalles del producto
+        self.compras_tree.bind('<Button-3>', self.mostrar_menu_compras)
+        
         # Botón para editar compra
         btn_frame = tb.Frame(list_frame)
         btn_frame.pack(fill='x', pady=10)
@@ -1210,6 +1322,10 @@ class MainWindow:
         
         # Bind para doble clic
         self.compras_tree.bind('<Double-1>', lambda e: self.editar_compra_perecedero())
+        
+        # Configurar navegación mejorada en calendarios después de un pequeño delay
+        self.root.after(100, lambda: self.configurar_navegacion_calendario(self.compra_fecha_cal))
+        self.root.after(100, lambda: self.configurar_navegacion_calendario(self.compra_vencimiento_cal))
     
     def create_ventas_tab(self):
         """Crea la pestaña de gestión de ventas"""
@@ -1218,196 +1334,355 @@ class MainWindow:
         self.ventas_frame = tb.Frame(self.notebook, bootstyle="light")
         self.notebook.add(self.ventas_frame, text="💰 Ventas")
         
-        # Frame para formulario de ventas con diseño mejorado
+        # Frame principal dividido en dos secciones
+        main_container = tb.Frame(self.ventas_frame)
+        main_container.pack(fill='both', expand=True, padx=15, pady=15)
+        
+        # ===== SECCIÓN SUPERIOR: FORMULARIO Y CARRITO =====
+        top_section = tb.Frame(main_container)
+        top_section.pack(fill='both', expand=False, pady=(0, 10))
+        
+        # Formulario izquierdo
         form_frame = tb.Labelframe(
-            self.ventas_frame, 
-            text="💵 Registrar Venta", 
-            padding=20,
+            top_section,
+            text="💵 Agregar Productos al Carrito",
+            padding=15,
             bootstyle="warning"
         )
-        form_frame.pack(fill='x', padx=15, pady=15)
+        form_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
         
-        # Grid para formulario - Fila 1: CLIENTE
+        # CLIENTE (solo una vez para toda la venta)
         tb.Label(
-            form_frame, 
+            form_frame,
             text="Cliente: *",
             font=('Segoe UI', 10, 'bold')
-        ).grid(row=0, column=0, sticky='w', padx=10, pady=8)
+        ).grid(row=0, column=0, sticky='w', padx=5, pady=5)
         
-        # Frame para búsqueda de cliente
         cli_search_frame = tb.Frame(form_frame)
-        cli_search_frame.grid(row=0, column=1, padx=10, pady=8, sticky='ew')
+        cli_search_frame.grid(row=0, column=1, columnspan=2, padx=5, pady=5, sticky='ew')
         
         self.venta_cliente_entry = tb.Entry(
-            cli_search_frame, 
-            textvariable=self.venta_cliente_busqueda, 
-            width=30,
-            font=('Segoe UI', 10)
+            cli_search_frame,
+            textvariable=self.venta_cliente_busqueda,
+            width=25,
+            font=('Segoe UI', 9)
         )
         self.venta_cliente_entry.pack(side='left', fill='x', expand=True)
         self.venta_cliente_entry.bind('<KeyRelease>', self.autocompletar_cliente_venta)
         
         tb.Button(
-            cli_search_frame, 
-            text="🔍", 
+            cli_search_frame,
+            text="🔍",
             command=self.buscar_cliente_venta,
             bootstyle="info-outline",
             width=3
-        ).pack(side='left', padx=5)
+        ).pack(side='left', padx=2)
         
         self.venta_cliente_label = tb.Label(
-            cli_search_frame, 
+            cli_search_frame,
             text="",
             font=('Segoe UI', 8),
             bootstyle="success"
         )
         self.venta_cliente_label.pack(side='left', padx=5)
         
-        # Fila 1: FECHA
+        # NIT/DPI o CF
         tb.Label(
-            form_frame, 
+            form_frame,
+            text="NIT o DPI (CF): *",
+            font=('Segoe UI', 10, 'bold')
+        ).grid(row=1, column=0, sticky='w', padx=5, pady=5)
+        
+        self.venta_cliente_nit_entry = tb.Entry(
+            form_frame,
+            textvariable=self.venta_cliente_nit,
+            width=25,
+            font=('Segoe UI', 9)
+        )
+        self.venta_cliente_nit_entry.grid(row=1, column=1, columnspan=2, padx=5, pady=5, sticky='w')
+        
+        # DIRECCIÓN
+        tb.Label(
+            form_frame,
+            text="Dirección:",
+            font=('Segoe UI', 10, 'bold')
+        ).grid(row=1, column=3, sticky='w', padx=5, pady=5)
+        
+        self.venta_cliente_direccion_entry = tb.Entry(
+            form_frame,
+            textvariable=self.venta_cliente_direccion,
+            width=30,
+            font=('Segoe UI', 9)
+        )
+        self.venta_cliente_direccion_entry.grid(row=1, column=4, padx=5, pady=5, sticky='w')
+        
+        # TELÉFONO
+        tb.Label(
+            form_frame,
+            text="Teléfono:",
+            font=('Segoe UI', 10, 'bold')
+        ).grid(row=2, column=0, sticky='w', padx=5, pady=5)
+        
+        self.venta_cliente_telefono_entry = tb.Entry(
+            form_frame,
+            textvariable=self.venta_cliente_telefono,
+            width=25,
+            font=('Segoe UI', 9)
+        )
+        self.venta_cliente_telefono_entry.grid(row=2, column=1, columnspan=2, padx=5, pady=5, sticky='w')
+        
+        # FECHA
+        tb.Label(
+            form_frame,
             text="Fecha: *",
             font=('Segoe UI', 10, 'bold')
-        ).grid(row=0, column=2, sticky='w', padx=10, pady=8)
+        ).grid(row=0, column=3, sticky='w', padx=5, pady=5)
         
         self.venta_fecha_cal = DateEntry(
             form_frame,
             dateformat='%d/%m/%Y',
-            width=18,
+            width=15,
             bootstyle="warning",
             firstweekday=0,
             startdate=None
         )
-        self.venta_fecha_cal.grid(row=0, column=3, padx=10, pady=8, sticky='w')
+        self.venta_fecha_cal.grid(row=0, column=4, padx=5, pady=5, sticky='w')
         
-        # Fila 2: PRODUCTO
+        # Separador
+        tb.Separator(form_frame, orient='horizontal').grid(row=3, column=0, columnspan=5, sticky='ew', pady=8)
+        
+        # PRODUCTO
         tb.Label(
-            form_frame, 
+            form_frame,
             text="Producto: *",
             font=('Segoe UI', 10, 'bold')
-        ).grid(row=1, column=0, sticky='w', padx=10, pady=8)
+        ).grid(row=4, column=0, sticky='w', padx=5, pady=5)
         
-        # Frame para búsqueda de producto
         prod_search_frame = tb.Frame(form_frame)
-        prod_search_frame.grid(row=1, column=1, padx=10, pady=8, sticky='ew')
+        prod_search_frame.grid(row=4, column=1, columnspan=2, padx=5, pady=5, sticky='ew')
         
         self.venta_producto_entry = tb.Entry(
-            prod_search_frame, 
-            textvariable=self.venta_producto_busqueda, 
-            width=30,
-            font=('Segoe UI', 10)
+            prod_search_frame,
+            textvariable=self.venta_producto_busqueda,
+            width=40,
+            font=('Segoe UI', 9)
         )
         self.venta_producto_entry.pack(side='left', fill='x', expand=True)
         self.venta_producto_entry.bind('<KeyRelease>', self.autocompletar_producto_venta)
         
         tb.Button(
-            prod_search_frame, 
-            text="🔍", 
+            prod_search_frame,
+            text="🔍",
             command=self.buscar_producto_venta,
             bootstyle="info-outline",
             width=3
-        ).pack(side='left', padx=5)
+        ).pack(side='left', padx=2)
         
         self.venta_producto_label = tb.Label(
-            prod_search_frame, 
+            prod_search_frame,
             text="",
             font=('Segoe UI', 8),
             bootstyle="success"
         )
         self.venta_producto_label.pack(side='left', padx=5)
         
-        # Fila 2: CANTIDAD
+        # FILA 5: CANTIDAD Y PRECIO
         tb.Label(
-            form_frame, 
-            text="Cantidad: *",
+            form_frame,
+            text="Cant.: *",
             font=('Segoe UI', 10, 'bold')
-        ).grid(row=1, column=2, sticky='w', padx=10, pady=8)
+        ).grid(row=5, column=0, sticky='w', padx=5, pady=5)
         
-        tb.Entry(
-            form_frame, 
-            textvariable=self.venta_cantidad, 
-            width=20,
-            font=('Segoe UI', 10)
-        ).grid(row=1, column=3, padx=10, pady=8, sticky='ew')
-        
-        # Fila 3: PRECIO
-        tb.Label(
-            form_frame, 
-            text="Precio Unitario (Q): *",
-            font=('Segoe UI', 10, 'bold')
-        ).grid(row=2, column=0, sticky='w', padx=10, pady=8)
-        
-        tb.Entry(
-            form_frame, 
-            textvariable=self.venta_precio, 
-            width=18,
-            font=('Segoe UI', 10)
-        ).grid(row=2, column=1, padx=10, pady=8, sticky='w')
-        
-        # Total calculado
-        self.venta_total_label = tb.Label(
-            form_frame, 
-            text="Total: Q 0.00",
-            font=('Segoe UI', 14, 'bold'),
-            bootstyle="warning"
+        self.venta_cantidad_entry = tb.Entry(
+            form_frame,
+            textvariable=self.venta_cantidad,
+            width=10,
+            font=('Segoe UI', 9)
         )
-        self.venta_total_label.grid(row=2, column=2, columnspan=2, sticky='w', padx=10, pady=8)
+        self.venta_cantidad_entry.grid(row=5, column=1, padx=5, pady=5, sticky='w')
         
-        # Fila 4: Stock disponible
+        # PRECIO
+        tb.Label(
+            form_frame,
+            text="Precio (Q): *",
+            font=('Segoe UI', 10, 'bold')
+        ).grid(row=5, column=2, sticky='w', padx=5, pady=5)
+        
+        self.venta_precio_entry = tb.Entry(
+            form_frame,
+            textvariable=self.venta_precio,
+            width=12,
+            font=('Segoe UI', 9),
+            state='readonly'
+        )
+        self.venta_precio_entry.grid(row=5, column=3, padx=5, pady=5, sticky='w')
+        
+        # FILA 6: Stock disponible - MÁS VISIBLE Y CON COLORES
+        stock_frame = tb.Frame(form_frame)
+        stock_frame.grid(row=6, column=0, columnspan=4, sticky='ew', padx=5, pady=8)
+        
         self.stock_label = tb.Label(
-            form_frame, 
+            stock_frame,
             text="📦 Stock Disponible: 0",
             font=('Segoe UI', 11, 'bold'),
             bootstyle="info"
         )
-        self.stock_label.grid(row=3, column=0, columnspan=2, sticky='w', padx=10, pady=8)
+        self.stock_label.pack(anchor='w')
         
-        # Configurar grid
+        # Espaciador invisible para bajar los botones
+        spacer = tb.Label(form_frame, text="")
+        spacer.grid(row=7, column=0, columnspan=4, pady=62)
+        
+        # Frame para botones (Agregar y Limpiar) - Alineado con botones del carrito
+        botones_frame = tb.Frame(form_frame)
+        botones_frame.grid(row=8, column=0, columnspan=4, pady=(10, 6))  # Cambiado a row=8
+        
+        # Botón Agregar al Carrito
+        tb.Button(
+            botones_frame,
+            text="🛒 Agregar al Carrito",
+            command=self.agregar_al_carrito,
+            bootstyle="success",
+            width=20
+        ).pack(side='left', padx=5)
+        
+        # Botón Limpiar Formulario
+        tb.Button(
+            botones_frame,
+            text="🧹 Limpiar",
+            command=self.limpiar_formulario_carrito,
+            bootstyle="secondary-outline",
+            width=15
+        ).pack(side='left', padx=5)
+        
         form_frame.columnconfigure(1, weight=1)
         form_frame.columnconfigure(3, weight=1)
         
-        # Bind para calcular total
-        self.venta_cantidad.trace('w', self.calcular_total_venta)
-        self.venta_precio.trace('w', self.calcular_total_venta)
+        # ===== CARRITO (derecha) =====
+        carrito_frame = tb.Labelframe(
+            top_section,
+            text="🛒 Carrito de Compras",
+            padding=10,
+            bootstyle="success"
+        )
+        carrito_frame.pack(side='left', fill='both', expand=True)
         
-        # Botón para registrar venta
+        # Tabla del carrito
+        carrito_tree_frame = tb.Frame(carrito_frame)
+        carrito_tree_frame.pack(fill='both', expand=True)
+        
+        carrito_cols = ('Producto', 'Cantidad', 'Precio', 'Subtotal')
+        self.carrito_tree = tb.Treeview(
+            carrito_tree_frame,
+            columns=carrito_cols,
+            show='headings',
+            height=7
+        )
+        
+        carrito_widths = {'Producto': 180, 'Cantidad': 80, 'Precio': 100, 'Subtotal': 100}
+        for col in carrito_cols:
+            self.carrito_tree.heading(col, text=col)
+            self.carrito_tree.column(col, width=carrito_widths[col], 
+                                    anchor='e' if col != 'Producto' else 'w')
+        
+        scrollbar_carrito = tb.Scrollbar(carrito_tree_frame, orient='vertical', 
+                                        command=self.carrito_tree.yview)
+        self.carrito_tree.configure(yscrollcommand=scrollbar_carrito.set)
+        
+        self.carrito_tree.pack(side='left', fill='both', expand=True)
+        scrollbar_carrito.pack(side='left', fill='y')
+        
+        # Total del carrito
+        total_frame = tb.Frame(carrito_frame)
+        total_frame.pack(fill='x', pady=10)
+        
+        tb.Label(
+            total_frame,
+            text="TOTAL:",
+            font=('Segoe UI', 14, 'bold')
+        ).pack(side='left', padx=10)
+        
+        self.carrito_total_label = tb.Label(
+            total_frame,
+            text="Q 0.00",
+            font=('Segoe UI', 16, 'bold'),
+            bootstyle="success"
+        )
+        self.carrito_total_label.pack(side='left')
+        
+        # Botones del carrito
+        btn_carrito_frame = tb.Frame(carrito_frame)
+        btn_carrito_frame.pack(fill='x', pady=5)
+        
         tb.Button(
-            form_frame, 
-            text="✅ Registrar Venta", 
-            command=self.registrar_venta,
-            bootstyle="warning",
+            btn_carrito_frame,
+            text="❌ Quitar Seleccionado",
+            command=self.quitar_del_carrito,
+            bootstyle="danger",
             width=25
-        ).grid(row=4, column=0, columnspan=4, pady=15)
+        ).pack(side='left', padx=5)
         
-        # Lista de ventas con diseño mejorado
+        tb.Button(
+            btn_carrito_frame,
+            text="🗑️ Limpiar Carrito",
+            command=self.limpiar_carrito,
+            bootstyle="warning",
+            width=20
+        ).pack(side='left', padx=5)
+        
+        tb.Button(
+            btn_carrito_frame,
+            text="✅ Finalizar Venta",
+            command=self.finalizar_venta,
+            bootstyle="success",
+            width=20
+        ).pack(side='left', padx=5)
+        
+        # ===== SECCIÓN INFERIOR: HISTORIAL DE VENTAS =====
         list_frame = tb.Labelframe(
-            self.ventas_frame, 
-            text="📜 Historial de Ventas", 
-            padding=15,
+            main_container,
+            text="📜 Historial de Ventas",
+            padding=10,
             bootstyle="info"
         )
-        list_frame.pack(fill='both', expand=True, padx=15, pady=(0, 15))
+        list_frame.pack(fill='both', expand=True)
+        
+        # Frame para búsqueda
+        search_frame = tb.Frame(list_frame)
+        search_frame.pack(fill='x', pady=(0, 10))
+        
+        tb.Label(search_frame, text="🔍 Buscar:", font=('Segoe UI', 10)).pack(side='left', padx=5)
+        self.venta_search = tb.Entry(search_frame, width=40)
+        self.venta_search.pack(side='left', padx=5)
+        self.venta_search.bind('<KeyRelease>', lambda e: self.refresh_ventas())
+        
+        tb.Label(search_frame, text="Busca por: Cliente, NIT/DPI, Ref. No. o Fecha",
+                font=('Segoe UI', 8, 'italic'), bootstyle="secondary").pack(side='left', padx=10)
         
         # Treeview
         tree_frame = tb.Frame(list_frame)
         tree_frame.pack(fill='both', expand=True)
         
-        columns = ('Ref. No.', 'Cliente', 'Código', 'Producto', 'Cantidad', 'Precio Unit.', 'Total', 'Fecha')
+        columns = ('Ref. No.', 'NIT/DPI', 'Cliente', 'Productos', 'Total', 'Fecha', 'Estado')
         self.ventas_tree = tb.Treeview(
-            tree_frame, 
-            columns=columns, 
-            show='headings', 
-            height=15
+            tree_frame,
+            columns=columns,
+            show='headings',
+            height=12
         )
         
-        column_widths = {'Ref. No.': 100, 'Cliente': 150, 'Código': 90, 'Producto': 150, 'Cantidad': 80, 
-                        'Precio Unit.': 100, 'Total': 100, 'Fecha': 150}
+        column_widths = {'Ref. No.': 120, 'NIT/DPI': 110, 'Cliente': 180, 'Productos': 100, 
+                        'Total': 120, 'Fecha': 150, 'Estado': 100}
         for col in columns:
-            self.ventas_tree.heading(col, text=col, command=lambda c=col: self.sort_treeview(self.ventas_tree, c, False))
-            self.ventas_tree.column(col, width=column_widths[col], anchor='center' if col not in ['Producto', 'Cliente', 'Código', 'Ref. No.'] else 'w')
+            self.ventas_tree.heading(col, text=col, 
+                                    command=lambda c=col: self.sort_treeview(self.ventas_tree, c, False))
+            self.ventas_tree.column(col, width=column_widths[col], 
+                                   anchor='center' if col not in ['Cliente', 'Ref. No.', 'NIT/DPI'] else 'w')
         
-        scrollbar_y = tb.Scrollbar(tree_frame, orient='vertical', command=self.ventas_tree.yview, bootstyle="warning-round")
-        scrollbar_x = tb.Scrollbar(tree_frame, orient='horizontal', command=self.ventas_tree.xview, bootstyle="warning-round")
+        scrollbar_y = tb.Scrollbar(tree_frame, orient='vertical', 
+                                  command=self.ventas_tree.yview, bootstyle="warning-round")
+        scrollbar_x = tb.Scrollbar(tree_frame, orient='horizontal', 
+                                  command=self.ventas_tree.xview, bootstyle="warning-round")
         self.ventas_tree.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
         
         self.ventas_tree.grid(row=0, column=0, sticky='nsew')
@@ -1420,6 +1695,13 @@ class MainWindow:
         # Colores alternados
         self.ventas_tree.tag_configure('evenrow', background='#f0f0f0')
         self.ventas_tree.tag_configure('oddrow', background='#ffffff')
+        
+        # Binding para ver detalles
+        self.ventas_tree.bind('<Double-Button-1>', self.ver_detalle_venta)
+        self.ventas_tree.bind('<Button-3>', self.mostrar_menu_ventas)
+        
+        # Configurar navegación en calendario
+        self.root.after(100, lambda: self.configurar_navegacion_calendario(self.venta_fecha_cal))
     
     def create_caja_tab(self):
         """Crea la pestaña de gestión de caja"""
@@ -1696,6 +1978,11 @@ class MainWindow:
         
         # Bind para doble clic (ver detalles)
         self.caja_tree.bind('<Double-1>', self.ver_detalle_movimiento)
+        
+        # Configurar navegación mejorada en calendarios
+        self.root.after(100, lambda: self.configurar_navegacion_calendario(self.caja_fecha_entry))
+        self.root.after(100, lambda: self.configurar_navegacion_calendario(self.caja_fecha_inicio))
+        self.root.after(100, lambda: self.configurar_navegacion_calendario(self.caja_fecha_fin))
     
     def create_reportes_tab(self):
         """Crea la pestaña de reportes y resúmenes"""
@@ -1829,8 +2116,20 @@ class MainWindow:
             width=28
         ).pack(side='left', padx=5, pady=5)
         
+        # Segunda fila de botones
+        export_buttons2 = tb.Frame(export_frame)
+        export_buttons2.pack(pady=(5, 0))
+        
         tb.Button(
-            export_buttons,
+            export_buttons2,
+            text="📦 Exportar Productos Completo",
+            command=self.exportar_productos_completo,
+            bootstyle="primary-outline",
+            width=35
+        ).pack(side='left', padx=5, pady=5)
+        
+        tb.Button(
+            export_buttons2,
             text="🏦 Exportar Movimientos Caja",
             command=self.exportar_reporte_caja,
             bootstyle="secondary-outline",
@@ -1901,6 +2200,9 @@ class MainWindow:
         self.stock_tree.tag_configure('alert_vencido_hover', background='#e85555', foreground='white')
         self.stock_tree.tag_configure('alert_critico_hover', background='#e69500', foreground='black')
         self.stock_tree.tag_configure('alert_advertencia_hover', background='#e8c130', foreground='black')
+        
+        # Agregar binding de click derecho para ver detalles del producto
+        self.stock_tree.bind('<Button-3>', self.mostrar_menu_alertas)
     
     def create_configuracion_tab(self):
         """Crea la pestaña de configuración"""
@@ -2201,116 +2503,29 @@ class MainWindow:
             messagebox.showerror("Error", f"No se pudo cambiar el tema: {str(e)}")
     
     def sort_treeview(self, tree, col, reverse):
-        """Ordena el treeview por columna (soporta texto, números, fechas y montos)"""
-        try:
-            from datetime import datetime
-            
-            data_list = [(tree.set(child, col), child) for child in tree.get_children('')]
-            
-            # Función para convertir valores para ordenamiento correcto
-            def convert_value(val):
-                # Intentar convertir fechas (formato dd/mm/yyyy)
-                if '/' in str(val) and len(str(val).split('/')) == 3:
-                    try:
-                        parts = str(val).split('/')
-                        if len(parts[0]) <= 2:  # dd/mm/yyyy
-                            return datetime.strptime(str(val), '%d/%m/%Y')
-                    except:
-                        pass
-                
-                # Intentar convertir números (incluyendo montos con Q, comas, etc.)
-                try:
-                    # Limpiar formato de moneda y comas
-                    clean_val = str(val).replace('Q', '').replace(',', '').strip()
-                    return float(clean_val)
-                except:
-                    pass
-                
-                # Si no es fecha ni número, devolver como texto en minúsculas
-                return str(val).lower()
-            
-            # Ordenar con la función de conversión
-            data_list.sort(key=lambda x: convert_value(x[0]), reverse=reverse)
-            
-            # Reordenar los items en el tree
-            for index, (val, child) in enumerate(data_list):
-                tree.move(child, '', index)
-            
-            # Actualizar el comando del heading para alternar el orden
-            tree.heading(col, command=lambda: self.sort_treeview(tree, col, not reverse))
-        except Exception as e:
-            # Si hay error, intentar ordenamiento simple
-            try:
-                data_list = [(tree.set(child, col), child) for child in tree.get_children('')]
-                data_list.sort(reverse=reverse)
-                for index, (val, child) in enumerate(data_list):
-                    tree.move(child, '', index)
-                tree.heading(col, command=lambda: self.sort_treeview(tree, col, not reverse))
-            except:
-                pass
+        """Ordena el treeview por columna (delegado a utilidades)"""
+        sort_treeview(tree, col, reverse)
     
-    # MÉTODOS DE CÁLCULO Y ACTUALIZACIÓN
-    def calcular_precio_venta(self, *args):
-        """Calcula el precio de venta automáticamente"""
-        try:
-            precio_compra = self.producto_precio_compra.get()
-            ganancia = self.producto_ganancia.get()
-            precio_venta = round(precio_compra * (1 + ganancia / 100), 2)
-            self.precio_venta_label.config(text=f"Precio de Venta: Q {precio_venta:,.2f}")
-        except:
-            self.precio_venta_label.config(text="Precio de Venta: Q 0.00")
-    
+    # MÉTODOS DE CÁLCULO Y ACTUALIZACIÓN - DELEGADOS A productos_tab.py
     def cambiar_tipo_calculo(self):
-        """Cambia entre cálculo por porcentaje o precio directo"""
-        if self.producto_tipo_calculo.get() == "porcentaje":
-            # Mostrar campo de % Ganancia
-            self.label_ganancia.grid(row=3, column=0, sticky='w', padx=5, pady=5)
-            self.entry_ganancia.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
-            # Ocultar campo de Precio Venta
-            self.label_precio_venta_manual.grid_forget()
-            self.entry_precio_venta_manual.grid_forget()
-            # Recalcular
-            self.calcular_precio_desde_ganancia()
-        else:
-            # Ocultar campo de % Ganancia
-            self.label_ganancia.grid_forget()
-            self.entry_ganancia.grid_forget()
-            # Mostrar campo de Precio Venta en la misma posición
-            self.label_precio_venta_manual.grid(row=3, column=0, sticky='w', padx=5, pady=5)
-            self.entry_precio_venta_manual.grid(row=3, column=1, padx=5, pady=5, sticky='ew')
-            # Recalcular
-            self.calcular_ganancia_desde_precio()
+        """Delegador: Cambia entre cálculo por porcentaje o precio directo"""
+        if hasattr(self, 'productos_tab'):
+            self.productos_tab.cambiar_tipo_calculo()
     
     def calcular_precio_desde_ganancia(self, event=None):
-        """Calcula el precio de venta desde el % de ganancia"""
-        try:
-            precio_compra = self.producto_precio_compra.get()
-            ganancia = self.producto_ganancia.get()
-            if precio_compra > 0:
-                precio_venta = round(precio_compra * (1 + ganancia / 100), 2)
-                monto_ganancia = round(precio_venta - precio_compra, 2)
-                self.precio_venta_label.config(text=f"Precio de Venta: Q {precio_venta:,.2f}")
-                self.monto_ganancia_label.config(text=f"Ganancia: {ganancia:.2f}% - Q {monto_ganancia:,.2f}")
-                # Actualizar también el campo manual por si cambian
-                self.producto_precio_venta_manual.set(precio_venta)
-        except:
-            self.precio_venta_label.config(text="Precio de Venta: Q 0.00")
-            self.monto_ganancia_label.config(text="Ganancia: Q 0.00")
+        """Delegador: Calcula el precio de venta desde el % de ganancia"""
+        if hasattr(self, 'productos_tab'):
+            self.productos_tab.calcular_precio_desde_ganancia(event)
     
     def calcular_ganancia_desde_precio(self, event=None):
-        """Calcula el % de ganancia desde el precio de venta"""
-        try:
-            precio_compra = self.producto_precio_compra.get()
-            precio_venta = self.producto_precio_venta_manual.get()
-            if precio_compra > 0 and precio_venta > 0:
-                ganancia = round(((precio_venta - precio_compra) / precio_compra) * 100, 2)
-                monto_ganancia = round(precio_venta - precio_compra, 2)
-                self.producto_ganancia.set(ganancia)
-                self.precio_venta_label.config(text=f"Precio de Venta: Q {precio_venta:,.2f}")
-                self.monto_ganancia_label.config(text=f"Ganancia: {ganancia:.2f}% - Q {monto_ganancia:,.2f}")
-        except:
-            self.precio_venta_label.config(text="Precio de Venta: Q 0.00")
-            self.monto_ganancia_label.config(text="Ganancia: Q 0.00")
+        """Delegador: Calcula el % de ganancia desde el precio de venta"""
+        if hasattr(self, 'productos_tab'):
+            self.productos_tab.calcular_ganancia_desde_precio(event)
+    
+    def abrir_generador_sku(self):
+        """Delegador: Abre ventana para generar código SKU automáticamente"""
+        if hasattr(self, 'productos_tab'):
+            self.productos_tab.abrir_generador_sku()
     
     def toggle_vencimiento_compra(self):
         """Habilita o deshabilita el campo de fecha de vencimiento"""
@@ -2351,233 +2566,7 @@ class MainWindow:
         """Actualiza el precio de compra automáticamente (YA NO SE USA - búsqueda ahora)"""
         pass
     
-    def abrir_generador_sku(self):
-        """Abre ventana para generar código SKU automáticamente"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("🏷️ Generador de Código SKU")
-        dialog.geometry("750x750")  # Aumentado de 650 a 750
-        dialog.transient(self.root)
-        dialog.withdraw()
-        dialog.grab_set()
-        self.agregar_icono(dialog)
-        
-        # Frame principal con scroll
-        main_frame = tb.Frame(dialog, padding=25)
-        main_frame.pack(fill='both', expand=True)
-        
-        # Título
-        tb.Label(
-            main_frame,
-            text="🏷️ Generador Automático de Código SKU",
-            font=('Segoe UI', 16, 'bold'),
-            bootstyle="primary"
-        ).pack(pady=(0, 8))
-        
-        # Descripción
-        tb.Label(
-            main_frame,
-            text="Complete los campos necesarios para generar un código único y descriptivo",
-            font=('Segoe UI', 10),
-            bootstyle="secondary",
-            justify='center'
-        ).pack(pady=(0, 15))
-        
-        # Frame para campos
-        canvas_frame = tb.Frame(main_frame)
-        canvas_frame.pack(fill='both', expand=True, pady=10)
-        
-        # Variables para los campos - CARGAR DATOS GUARDADOS
-        sku_vars = {
-            'nombre': tk.StringVar(value=self.sku_data.get('nombre', '')),
-            'categoria': tk.StringVar(value=self.sku_data.get('categoria', '')),
-            'marca': tk.StringVar(value=self.sku_data.get('marca', '')),
-            'color': tk.StringVar(value=self.sku_data.get('color', '')),
-            'tamaño': tk.StringVar(value=self.sku_data.get('tamaño', '')),
-            'dibujo': tk.StringVar(value=self.sku_data.get('dibujo', '')),
-            'cod_color': tk.StringVar(value=self.sku_data.get('cod_color', ''))
-        }
-        
-        # Crear campos de entrada más grandes
-        campos = [
-            ('Nombre del Producto:', 'nombre', 'Ejemplo: BRILLOS CON LLAVERO', True),
-            ('Categoría:', 'categoria', 'Ejemplo: Labial', True),
-            ('Marca:', 'marca', 'Ejemplo: Guess', False),
-            ('Color:', 'color', 'Ejemplo: ROJO', False),
-            ('Tamaño:', 'tamaño', 'Ejemplo: Mediano', False),
-            ('Dibujo:', 'dibujo', 'Ejemplo: Gato', False),
-            ('Código de Color:', 'cod_color', 'Ejemplo: R20 (se mantiene completo)', False)
-        ]
-        
-        for idx, (label, key, placeholder, required) in enumerate(campos):
-            # Frame para cada campo con grid para mejor alineación
-            field_frame = tb.Frame(canvas_frame)
-            field_frame.pack(fill='x', pady=6)
-            
-            # Label con indicador de requerido - ALINEADO
-            label_text = f"{label} {'*' if required else ''}"
-            label_widget = tb.Label(
-                field_frame,
-                text=label_text,
-                font=('Segoe UI', 11, 'bold' if required else 'normal'),
-                anchor='e'
-            )
-            label_widget.grid(row=0, column=0, sticky='e', padx=(0, 10), ipadx=5)
-            
-            # Entry más grande - ALINEADO
-            entry = tb.Entry(
-                field_frame,
-                textvariable=sku_vars[key],
-                width=30,
-                font=('Segoe UI', 11)
-            )
-            entry.grid(row=0, column=1, sticky='w', padx=5)
-            
-            # Placeholder más visible - ALINEADO
-            tb.Label(
-                field_frame,
-                text=placeholder,
-                font=('Segoe UI', 9, 'italic'),
-                bootstyle="secondary",
-                anchor='w'
-            ).grid(row=0, column=2, sticky='w', padx=5)
-            
-            # Configurar columnas para alineación
-            field_frame.columnconfigure(0, minsize=180)  # Label fijo
-            field_frame.columnconfigure(1, minsize=280)  # Entry fijo
-            
-            # Bind para actualizar SKU en tiempo real
-            sku_vars[key].trace('w', lambda *args: actualizar_preview())
-        
-        # Separador
-        tb.Separator(main_frame, orient='horizontal').pack(fill='x', pady=15)
-        
-        # Preview del SKU generado - MÁS GRANDE
-        preview_frame = tb.Labelframe(
-            main_frame,
-            text="📋 Vista Previa del Código SKU Generado",
-            padding=20,
-            bootstyle="success"
-        )
-        preview_frame.pack(fill='x', pady=10)
-        
-        sku_preview_var = tk.StringVar(value="Complete los campos para generar el código...")
-        sku_preview_label = tb.Label(
-            preview_frame,
-            textvariable=sku_preview_var,
-            font=('Segoe UI', 14, 'bold'),
-            bootstyle="success",
-            wraplength=650
-        )
-        sku_preview_label.pack(pady=5)
-        
-        # Nota explicativa
-        tb.Label(
-            preview_frame,
-            text="Formato: NOMBRE-CATEGORIA-MARCA-COLOR-CODCOLOR-TAMAÑO-DIBUJO-CORRELATIVO",
-            font=('Segoe UI', 8),
-            bootstyle="secondary"
-        ).pack()
-        
-        def generar_codigo_sku():
-            """Genera el código SKU basado en los campos"""
-            partes = []
-            
-            # Procesar cada campo en el orden especificado - INCLUYE COLOR
-            for key in ['nombre', 'categoria', 'marca', 'color', 'cod_color', 'tamaño', 'dibujo']:
-                valor = sku_vars[key].get().strip().upper()
-                if valor:
-                    if key == 'cod_color':
-                        # Código de color se mantiene completo
-                        partes.append(valor)
-                    else:
-                        # Tomar primeras 3 letras de cada palabra
-                        palabras = valor.split()
-                        if palabras:
-                            # Si es una sola palabra, tomar 3 caracteres
-                            if len(palabras) == 1:
-                                partes.append(palabras[0][:3])
-                            else:
-                                # Si son múltiples palabras, tomar primera palabra
-                                partes.append(palabras[0][:3])
-            
-            if partes:
-                # Agregar correlativo (siempre 001 para nuevos)
-                codigo_base = '-'.join(partes)
-                return f"{codigo_base}-001"
-            return ""
-        
-        def actualizar_preview():
-            """Actualiza la vista previa del SKU"""
-            codigo = generar_codigo_sku()
-            if codigo:
-                sku_preview_var.set(codigo)
-            else:
-                sku_preview_var.set("Complete los campos para generar el código...")
-        
-        def aplicar_sku():
-            """Aplica el código SKU generado al campo de código"""
-            codigo = generar_codigo_sku()
-            if codigo:
-                # Guardar los datos para la próxima vez
-                for key in sku_vars:
-                    self.sku_data[key] = sku_vars[key].get()
-                
-                # Habilitar temporalmente el campo para actualizar
-                self.codigo_entry.config(state='normal')
-                self.producto_codigo.set(codigo)
-                self.codigo_entry.config(state='disabled')
-                
-                # También llenar nombre y categoría si están vacíos
-                if not self.producto_nombre.get() and sku_vars['nombre'].get():
-                    self.producto_nombre.set(sku_vars['nombre'].get())
-                if not self.producto_categoria.get() and sku_vars['categoria'].get():
-                    self.producto_categoria.set(sku_vars['categoria'].get())
-                
-                dialog.destroy()
-                messagebox.showinfo("✅ Código Generado", f"Código SKU aplicado correctamente:\n\n{codigo}\n\nEl código está protegido.\nPara modificarlo, use nuevamente el generador.")
-            else:
-                messagebox.showwarning("⚠️ Campos Incompletos", "Complete al menos el Nombre y la Categoría para generar el código")
-        
-        def limpiar_campos_sku():
-            """Limpia todos los campos del generador"""
-            for key in sku_vars:
-                sku_vars[key].set('')
-            actualizar_preview()
-        
-        # Actualizar preview inicial si hay datos
-        actualizar_preview()
-        
-        # Botones más grandes con botón de limpiar
-        buttons_frame = tb.Frame(main_frame)
-        buttons_frame.pack(pady=20)
-        
-        tb.Button(
-            buttons_frame,
-            text="✓ Aplicar Código SKU",
-            command=aplicar_sku,
-            bootstyle="success",
-            width=20
-        ).pack(side='left', padx=5)
-        
-        tb.Button(
-            buttons_frame,
-            text="🗑️ Limpiar Campos",
-            command=limpiar_campos_sku,
-            bootstyle="warning",
-            width=20
-        ).pack(side='left', padx=5)
-        
-        tb.Button(
-            buttons_frame,
-            text="✗ Cancelar",
-            command=dialog.destroy,
-            bootstyle="secondary",
-            width=20
-        ).pack(side='left', padx=5)
-        
-        # Centrar y mostrar
-        self.centrar_ventana(dialog)
-        dialog.deiconify()
+    # MÉTODO abrir_generador_sku() MIGRADO A productos_tab.py
     
     # MÉTODOS DE ACCIÓN
     def crear_producto(self):
@@ -2589,16 +2578,32 @@ class MainWindow:
             precio_compra = self.producto_precio_compra.get()
             ganancia = self.producto_ganancia.get()
             
-            # Extraer datos del SKU si existen
+            # Extraer TODOS los datos del SKU
             marca = self.sku_data.get('marca', '')
             color = self.sku_data.get('color', '')
             tamaño = self.sku_data.get('tamaño', '')
+            dibujo = self.sku_data.get('dibujo', '')
+            cod_color = self.sku_data.get('cod_color', '')
             
-            exito, mensaje = self.controller.crear_producto(codigo, nombre, categoria, precio_compra, ganancia, marca, color, tamaño)
+            exito, mensaje = self.controller.crear_producto(codigo, nombre, categoria, precio_compra, ganancia, marca, color, tamaño, dibujo, cod_color)
             
             if exito:
+                # Extraer el ID del producto del mensaje
+                import re
+                match = re.search(r'ID:\s*(\d+)', mensaje)
+                if match and codigo.endswith('-000'):
+                    producto_id = int(match.group(1))
+                    # Actualizar el código con el ID real
+                    nuevo_codigo = codigo.replace('-000', f'-{producto_id:03d}')
+                    # Actualizar el producto con el código correcto
+                    self.controller.actualizar_producto(
+                        producto_id, nuevo_codigo, nombre, categoria, 
+                        precio_compra, ganancia, marca, color, tamaño, dibujo, cod_color
+                    )
+                    mensaje = f"Producto creado exitosamente\nCódigo: {nuevo_codigo}"
+                
                 messagebox.showinfo("Éxito", mensaje)
-                self.limpiar_formulario_producto()
+                self.limpiar_formulario_producto_tab()
                 self.refresh_productos()
                 self.refresh_combos()
             else:
@@ -2620,18 +2625,20 @@ class MainWindow:
             precio_compra = self.producto_precio_compra.get()
             ganancia = self.producto_ganancia.get()
             
-            # Extraer datos del SKU si existen
+            # Extraer TODOS los datos del SKU
             marca = self.sku_data.get('marca', '')
             color = self.sku_data.get('color', '')
             tamaño = self.sku_data.get('tamaño', '')
+            dibujo = self.sku_data.get('dibujo', '')
+            cod_color = self.sku_data.get('cod_color', '')
             
             exito, mensaje = self.controller.actualizar_producto(
-                self.producto_seleccionado, codigo, nombre, categoria, precio_compra, ganancia, marca, color, tamaño
+                self.producto_seleccionado, codigo, nombre, categoria, precio_compra, ganancia, marca, color, tamaño, dibujo, cod_color
             )
             
             if exito:
                 messagebox.showinfo("Éxito", mensaje)
-                self.limpiar_formulario_producto()
+                self.limpiar_formulario_producto_tab()
                 self.refresh_productos()
                 self.refresh_combos()
             else:
@@ -2761,8 +2768,8 @@ class MainWindow:
         texto = self.venta_cliente_busqueda.get()
         
         # Destruir listbox anterior si existe
-        if hasattr(self, 'cliente_listbox') and self.cliente_listbox.winfo_exists():
-            self.cliente_listbox.destroy()
+        if hasattr(self, 'cliente_venta_listbox_window') and self.cliente_venta_listbox_window.winfo_exists():
+            self.cliente_venta_listbox_window.destroy()
         
         if len(texto) < 2:
             return
@@ -2773,49 +2780,99 @@ class MainWindow:
         if not clientes:
             return
         
-        # Crear listbox flotante
+        # Forzar actualización del widget para obtener posición real
+        self.venta_cliente_entry.update_idletasks()
+        self.root.update_idletasks()
+        
+        # Obtener coordenadas absolutas en pantalla
         x = self.venta_cliente_entry.winfo_rootx()
-        y = self.venta_cliente_entry.winfo_rooty() + self.venta_cliente_entry.winfo_height()
+        y = self.venta_cliente_entry.winfo_rooty()
+        height = self.venta_cliente_entry.winfo_height()
         width = self.venta_cliente_entry.winfo_width()
         
-        self.cliente_listbox = tk.Listbox(
-            self.root,
+        # Si el widget no está renderizado correctamente, usar valores por defecto
+        if width <= 1 or height <= 1:
+            # ⚙️ EDITABLE: Ancho del listbox (en pixels)
+            width = 350
+            # ⚙️ EDITABLE: Altura del Entry para calcular posición (en pixels)
+            # Si el listbox aparece muy arriba, AUMENTA este valor (ej: 40, 45, 50)
+            # Si aparece muy abajo, DISMINUYE este valor (ej: 30, 25, 20)
+            height = 80
+        
+        # Crear ventana Toplevel independiente
+        self.cliente_venta_listbox_window = tk.Toplevel(self.root)
+        self.cliente_venta_listbox_window.wm_overrideredirect(True)  # Sin bordes
+        self.cliente_venta_listbox_window.wm_attributes('-topmost', True)  # Siempre encima
+        
+        # Posicionar EXACTAMENTE DEBAJO del Entry
+        listbox_height = min(150, len(clientes) * 30)  # Altura dinámica
+        # ⚙️ EDITABLE: Ajuste de posición
+        # VERTICAL (Y): Para bajar más → y+height+5, y+height+10, etc.
+        #               Para subir → y+height-5, y+height-10, etc.
+        # HORIZONTAL (X): Para mover a la DERECHA → x+5, x+10, x+15, etc.
+        #                 Para mover a la IZQUIERDA → x-5, x-10, x-15, etc.
+        self.cliente_venta_listbox_window.geometry(f"{width}x{listbox_height}+{x+119}+{y+height}")
+        
+        # Frame con borde para mejor apariencia
+        frame = tb.Frame(self.cliente_venta_listbox_window, bootstyle="default")
+        frame.pack(fill='both', expand=True)
+        
+        # Crear Listbox dentro del frame con mejor estilo
+        self.cliente_venta_listbox = tk.Listbox(
+            frame,
             height=min(5, len(clientes)),
-            width=width // 8,
-            font=('Segoe UI', 10)
+            font=('Segoe UI', 10),
+            relief='flat',
+            borderwidth=0,
+            bg='white',
+            fg='black',
+            selectbackground='#0078d4',
+            selectforeground='white',
+            activestyle='none',
+            highlightthickness=1,
+            highlightcolor='#0078d4',
+            highlightbackground='#cccccc'
         )
-        self.cliente_listbox.place(x=x - self.root.winfo_rootx(), 
-                                   y=y - self.root.winfo_rooty())
+        self.cliente_venta_listbox.pack(fill='both', expand=True, padx=1, pady=1)
         
         # Llenar con sugerencias
         for cli in clientes[:10]:
-            self.cliente_listbox.insert('end', f"{cli['nombre']} - {cli['nit_dpi']}")
+            self.cliente_venta_listbox.insert('end', f"{cli['nombre']} - {cli['nit_dpi']}")
         
         # Eventos del listbox
         def seleccionar_cliente(event=None):
-            if self.cliente_listbox.curselection():
-                idx = self.cliente_listbox.curselection()[0]
-                seleccion = self.cliente_listbox.get(idx)
-                self.venta_cliente_busqueda.set(seleccion)
+            if self.cliente_venta_listbox.curselection():
+                idx = self.cliente_venta_listbox.curselection()[0]
+                seleccion = self.cliente_venta_listbox.get(idx)
+                self.venta_cliente_busqueda.set(clientes[idx]['nombre'])
+                self.venta_cliente_nit.set(clientes[idx]['nit_dpi'])  # Actualizar campo NIT
                 self.venta_cliente_id = clientes[idx]['id']
-                self.venta_cliente_label.config(text="✓ Seleccionado", bootstyle="success")
-                self.cliente_listbox.destroy()
+                self.venta_cliente_label.config(text=f"✓ {clientes[idx]['nombre']}", bootstyle="success")
+                self.cliente_venta_listbox_window.destroy()
         
-        self.cliente_listbox.bind('<<ListboxSelect>>', seleccionar_cliente)
-        self.cliente_listbox.bind('<Return>', seleccionar_cliente)
-        self.cliente_listbox.bind('<Escape>', lambda e: self.cliente_listbox.destroy())
+        def cerrar_listbox(event=None):
+            if self.cliente_venta_listbox_window.winfo_exists():
+                self.cliente_venta_listbox_window.destroy()
         
+        self.cliente_venta_listbox.bind('<<ListboxSelect>>', seleccionar_cliente)
+        self.cliente_venta_listbox.bind('<Return>', seleccionar_cliente)
+        self.cliente_venta_listbox.bind('<Escape>', cerrar_listbox)
+        
+        # Cerrar si se hace clic fuera
+        self.cliente_venta_listbox_window.bind('<FocusOut>', cerrar_listbox)
+        
+        # Permitir navegación con teclado
         if event.keysym == 'Down':
-            self.cliente_listbox.focus_set()
-            self.cliente_listbox.selection_set(0)
+            self.cliente_venta_listbox.focus_set()
+            self.cliente_venta_listbox.selection_set(0)
     
     def autocompletar_producto_venta(self, event):
         """Autocompletado tipo Google para producto en ventas"""
         texto = self.venta_producto_busqueda.get()
         
         # Destruir listbox anterior si existe
-        if hasattr(self, 'producto_venta_listbox') and self.producto_venta_listbox.winfo_exists():
-            self.producto_venta_listbox.destroy()
+        if hasattr(self, 'producto_venta_listbox_window') and self.producto_venta_listbox_window.winfo_exists():
+            self.producto_venta_listbox_window.destroy()
         
         if len(texto) < 2:
             return
@@ -2831,19 +2888,60 @@ class MainWindow:
         if not productos_filtrados:
             return
         
-        # Crear listbox flotante
+        # Forzar actualización del widget para obtener posición real
+        self.venta_producto_entry.update_idletasks()
+        self.root.update_idletasks()
+        
+        # Obtener coordenadas absolutas en pantalla
         x = self.venta_producto_entry.winfo_rootx()
-        y = self.venta_producto_entry.winfo_rooty() + self.venta_producto_entry.winfo_height()
+        y = self.venta_producto_entry.winfo_rooty()
+        height = self.venta_producto_entry.winfo_height()
         width = self.venta_producto_entry.winfo_width()
         
+        # Si el widget no está renderizado correctamente, usar valores por defecto
+        if width <= 1 or height <= 1:
+            # ⚙️ EDITABLE: Ancho del listbox (en pixels)
+            width = 500
+            # ⚙️ EDITABLE: Altura del Entry para calcular posición (en pixels)
+            # Si el listbox aparece muy arriba, AUMENTA este valor (ej: 40, 45, 50)
+            # Si aparece muy abajo, DISMINUYE este valor (ej: 30, 25, 20)
+            height = 139
+        
+        # Crear ventana Toplevel independiente
+        self.producto_venta_listbox_window = tk.Toplevel(self.root)
+        self.producto_venta_listbox_window.wm_overrideredirect(True)  # Sin bordes
+        self.producto_venta_listbox_window.wm_attributes('-topmost', True)  # Siempre encima
+        
+        # Posicionar EXACTAMENTE DEBAJO del Entry
+        listbox_height = min(150, len(productos_filtrados) * 30)  # Altura dinámica
+        # ⚙️ EDITABLE: Ajuste de posición
+        # VERTICAL (Y): Para bajar más → y+height+5, y+height+10, etc.
+        #               Para subir → y+height-5, y+height-10, etc.
+        # HORIZONTAL (X): Para mover a la DERECHA → x+5, x+10, x+15, etc.
+        #                 Para mover a la IZQUIERDA → x-5, x-10, x-15, etc.
+        self.producto_venta_listbox_window.geometry(f"{width}x{listbox_height}+{x+119}+{y+height}")
+        
+        # Frame con borde para mejor apariencia
+        frame = tb.Frame(self.producto_venta_listbox_window, bootstyle="default")
+        frame.pack(fill='both', expand=True)
+        
+        # Crear Listbox dentro del frame con mejor estilo
         self.producto_venta_listbox = tk.Listbox(
-            self.root,
+            frame,
             height=min(5, len(productos_filtrados)),
-            width=width // 8,
-            font=('Segoe UI', 10)
+            font=('Segoe UI', 10),
+            relief='flat',
+            borderwidth=0,
+            bg='white',
+            fg='black',
+            selectbackground='#0078d4',
+            selectforeground='white',
+            activestyle='none',
+            highlightthickness=1,
+            highlightcolor='#0078d4',
+            highlightbackground='#cccccc'
         )
-        self.producto_venta_listbox.place(x=x - self.root.winfo_rootx(), 
-                                          y=y - self.root.winfo_rooty())
+        self.producto_venta_listbox.pack(fill='both', expand=True, padx=1, pady=1)
         
         # Llenar con sugerencias
         for prod in productos_filtrados[:10]:
@@ -2864,19 +2962,36 @@ class MainWindow:
                     text=f"✓ Q{prod['precio_venta']:.2f}", 
                     bootstyle="success"
                 )
-                # Actualizar el stock visible
+                # Actualizar el stock visible con colores
                 stock = prod['stock_actual']
-                color = "success" if stock > 10 else "warning" if stock > 0 else "danger"
+                if stock > 10:
+                    color = "success"
+                    texto = f"📦 Stock Disponible: {stock} ✓"
+                elif stock > 0:
+                    color = "warning"
+                    texto = f"⚠️ Stock Bajo: {stock}"
+                else:
+                    color = "danger"
+                    texto = f"❌ SIN STOCK"
+                
                 self.stock_label.config(
-                    text=f"📦 Stock Disponible: {stock}",
+                    text=texto,
                     bootstyle=color
                 )
-                self.producto_venta_listbox.destroy()
+                self.producto_venta_listbox_window.destroy()
+        
+        def cerrar_listbox(event=None):
+            if self.producto_venta_listbox_window.winfo_exists():
+                self.producto_venta_listbox_window.destroy()
         
         self.producto_venta_listbox.bind('<<ListboxSelect>>', seleccionar_producto)
         self.producto_venta_listbox.bind('<Return>', seleccionar_producto)
-        self.producto_venta_listbox.bind('<Escape>', lambda e: self.producto_venta_listbox.destroy())
+        self.producto_venta_listbox.bind('<Escape>', cerrar_listbox)
         
+        # Cerrar si se hace clic fuera
+        self.producto_venta_listbox_window.bind('<FocusOut>', cerrar_listbox)
+        
+        # Permitir navegación con teclado
         if event.keysym == 'Down':
             self.producto_venta_listbox.focus_set()
             self.producto_venta_listbox.selection_set(0)
@@ -3123,6 +3238,7 @@ class MainWindow:
                     values = item['values']
                     self.venta_cliente_id = values[0]
                     self.venta_cliente_busqueda.set(values[1])
+                    self.venta_cliente_nit.set(values[2])  # Actualizar campo NIT
                     self.venta_cliente_label.config(text=f"✓ {values[1]} ({values[2]})")
                     dialog.destroy()
                 else:
@@ -3131,6 +3247,123 @@ class MainWindow:
             tb.Button(frame, text="Seleccionar", command=seleccionar, bootstyle="success").pack(pady=5)
             
             tree.bind('<Double-1>', lambda e: seleccionar())
+    
+    def guardar_cliente_rapido(self):
+        """Diálogo rápido para agregar un nuevo cliente durante la venta"""
+        # Obtener el texto actual del campo de búsqueda como nombre sugerido
+        nombre_sugerido = self.venta_cliente_busqueda.get().strip()
+        # Obtener el NIT/DPI si ya fue ingresado
+        nit_sugerido = self.venta_cliente_nit.get().strip()
+        # Obtener la dirección si ya fue ingresada
+        direccion_sugerida = self.venta_cliente_direccion.get().strip()
+        
+        # Crear ventana de diálogo
+        dialog = tk.Toplevel(self.root)
+        dialog.title("💾 Agregar Cliente Rápido")
+        
+        # Calcular posición centrada
+        width = 450
+        height = 320  # Aumentado para incluir dirección
+        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (dialog.winfo_screenheight() // 2) - (height // 2)
+        dialog.geometry(f'{width}x{height}+{x}+{y}')
+        
+        dialog.transient(self.root)
+        dialog.grab_set()
+        self.agregar_icono(dialog)
+        
+        # Frame principal
+        main_frame = tb.Frame(dialog, padding=20)
+        main_frame.pack(fill='both', expand=True)
+        
+        tb.Label(main_frame, text="Complete los datos del cliente:", 
+                font=('Segoe UI', 11, 'bold')).pack(pady=(0, 15))
+        
+        # Campos del formulario
+        form = tb.Frame(main_frame)
+        form.pack(fill='x', pady=10)
+        
+        # Nombre
+        tb.Label(form, text="Nombre: *", font=('Segoe UI', 10, 'bold')).grid(
+            row=0, column=0, sticky='w', pady=8, padx=5)
+        nombre_var = tk.StringVar(value=nombre_sugerido)
+        nombre_entry = tb.Entry(form, textvariable=nombre_var, width=30, font=('Segoe UI', 10))
+        nombre_entry.grid(row=0, column=1, pady=8, padx=5, sticky='ew')
+        nombre_entry.focus()
+        
+        # NIT/DPI o CF
+        tb.Label(form, text="NIT o DPI (CF): *", font=('Segoe UI', 10, 'bold')).grid(
+            row=1, column=0, sticky='w', pady=8, padx=5)
+        nit_var = tk.StringVar(value=nit_sugerido)
+        nit_entry = tb.Entry(form, textvariable=nit_var, width=30, font=('Segoe UI', 10))
+        nit_entry.grid(row=1, column=1, pady=8, padx=5, sticky='ew')
+        
+        # Dirección (opcional)
+        tb.Label(form, text="Dirección:", font=('Segoe UI', 10)).grid(
+            row=2, column=0, sticky='w', pady=8, padx=5)
+        direccion_var = tk.StringVar(value=direccion_sugerida)
+        direccion_entry = tb.Entry(form, textvariable=direccion_var, width=30, font=('Segoe UI', 10))
+        direccion_entry.grid(row=2, column=1, pady=8, padx=5, sticky='ew')
+        
+        # Teléfono (opcional)
+        tb.Label(form, text="Teléfono:", font=('Segoe UI', 10)).grid(
+            row=3, column=0, sticky='w', pady=8, padx=5)
+        telefono_var = tk.StringVar()
+        telefono_entry = tb.Entry(form, textvariable=telefono_var, width=30, font=('Segoe UI', 10))
+        telefono_entry.grid(row=3, column=1, pady=8, padx=5, sticky='ew')
+        
+        form.columnconfigure(1, weight=1)
+        
+        # Función para guardar
+        def guardar():
+            nombre = nombre_var.get().strip()
+            nit = nit_var.get().strip()
+            telefono = telefono_var.get().strip()
+            direccion = direccion_var.get().strip()
+            
+            # Validaciones
+            if not nombre:
+                messagebox.showwarning("Advertencia", "El nombre es obligatorio")
+                nombre_entry.focus()
+                return
+            
+            if not nit:
+                messagebox.showwarning("Advertencia", "El NIT/DPI o CF es obligatorio")
+                nit_entry.focus()
+                return
+            
+            # Guardar cliente
+            exito, mensaje = self.controller.crear_cliente(nombre, nit, direccion, telefono)
+            
+            if exito:
+                # Buscar el cliente recién creado para obtener su ID
+                clientes = self.controller.buscar_cliente(nombre)
+                if clientes:
+                    # Tomar el último cliente (el recién creado)
+                    nuevo_cliente = clientes[-1]
+                    self.venta_cliente_id = nuevo_cliente['id']
+                    self.venta_cliente_busqueda.set(nuevo_cliente['nombre'])
+                    self.venta_cliente_nit.set(nuevo_cliente['nit_dpi'])  # Actualizar campo NIT
+                    self.venta_cliente_direccion.set(nuevo_cliente.get('direccion', ''))  # Actualizar campo Dirección
+                    self.venta_cliente_label.config(text=f"✓ {nuevo_cliente['nombre']} ({nuevo_cliente['nit_dpi']})")
+                
+                messagebox.showinfo("Éxito", f"✅ {mensaje}\n\nCliente seleccionado para la venta.")
+                self.refresh_clientes()  # Actualizar lista de clientes
+                dialog.destroy()
+            else:
+                messagebox.showerror("Error", mensaje)
+        
+        # Botones
+        btn_frame = tb.Frame(main_frame)
+        btn_frame.pack(fill='x', pady=(15, 0))
+        
+        tb.Button(btn_frame, text="Cancelar", command=dialog.destroy, 
+                 bootstyle="secondary", width=15).pack(side='left', padx=5)
+        tb.Button(btn_frame, text="💾 Guardar y Seleccionar", command=guardar, 
+                 bootstyle="success", width=25).pack(side='right', padx=5)
+        
+        # Enter para guardar
+        dialog.bind('<Return>', lambda e: guardar())
     
     def buscar_producto_venta(self):
         """Abre diálogo para buscar producto"""
@@ -3211,7 +3444,20 @@ class MainWindow:
                     self.venta_producto_busqueda.set(values[2])
                     self.venta_producto_label.config(text=f"✓ {values[2]}")
                     self.venta_precio.set(producto['precio_venta'])
-                    self.stock_label.config(text=f"📦 Stock Disponible: {producto['stock_actual']:,}")
+                    
+                    # Actualizar stock con colores
+                    stock = producto['stock_actual']
+                    if stock > 10:
+                        color = "success"
+                        texto = f"📦 Stock Disponible: {stock:,} ✓"
+                    elif stock > 0:
+                        color = "warning"
+                        texto = f"⚠️ Stock Bajo: {stock:,}"
+                    else:
+                        color = "danger"
+                        texto = f"❌ SIN STOCK"
+                    
+                    self.stock_label.config(text=texto, bootstyle=color)
                     dialog.destroy()
                 else:
                     messagebox.showwarning("Advertencia", "Seleccione un producto")
@@ -3293,6 +3539,7 @@ class MainWindow:
                 self.compra_proveedor_id = None
                 self.refresh_compras()
                 self.refresh_productos()
+                self.refresh_caja()  # Actualizar tabla de caja
                 self.actualizar_resumen()
             else:
                 messagebox.showerror("Error", mensaje)
@@ -3435,6 +3682,9 @@ class MainWindow:
             width=15
         ).pack(side='left', padx=5)
         
+        # Configurar navegación mejorada en calendario
+        dialog.after(100, lambda: self.configurar_navegacion_calendario(venc_cal))
+        
         # Centrar y mostrar ventana
         dialog.update_idletasks()
         x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
@@ -3442,7 +3692,467 @@ class MainWindow:
         dialog.geometry(f'500x300+{x}+{y}')
         dialog.deiconify()
     
+    # FUNCIONES DEL CARRITO DE VENTAS
+    def agregar_al_carrito(self):
+        """Agrega un producto al carrito de ventas"""
+        try:
+            # Validar producto
+            if not self.venta_producto_id:
+                messagebox.showwarning("Advertencia", "Busque y seleccione un producto")
+                return
+            
+            cantidad = self.venta_cantidad.get()
+            precio = self.venta_precio.get()
+            
+            # Validar cantidad
+            if cantidad <= 0:
+                messagebox.showwarning("Advertencia", "La cantidad debe ser mayor a 0")
+                return
+            
+            # Validar precio
+            if precio <= 0:
+                messagebox.showwarning("Advertencia", "El precio debe ser mayor a 0")
+                return
+            
+            # Obtener información del producto
+            producto = self.controller.obtener_producto_por_id(self.venta_producto_id)
+            if not producto:
+                messagebox.showerror("Error", "Producto no encontrado")
+                return
+            
+            # Validar stock
+            if producto['stock_actual'] < cantidad:
+                messagebox.showwarning("Stock Insuficiente", 
+                                      f"Stock disponible: {producto['stock_actual']}\n"
+                                      f"Cantidad solicitada: {cantidad}")
+                return
+            
+            # Verificar si el producto ya está en el carrito
+            for item in self.carrito_ventas:
+                if item['producto_id'] == self.venta_producto_id:
+                    # Actualizar cantidad
+                    nueva_cantidad = item['cantidad'] + cantidad
+                    if producto['stock_actual'] < nueva_cantidad:
+                        messagebox.showwarning("Stock Insuficiente",
+                                              f"Ya tiene {item['cantidad']} en el carrito.\n"
+                                              f"Stock disponible: {producto['stock_actual']}")
+                        return
+                    item['cantidad'] = nueva_cantidad
+                    item['subtotal'] = item['cantidad'] * item['precio_unitario']
+                    self.actualizar_tabla_carrito()
+                    self.limpiar_formulario_producto()
+                    messagebox.showinfo("Producto Actualizado", 
+                                       f"Cantidad actualizada a {nueva_cantidad} unidades")
+                    return
+            
+            # Agregar nuevo producto al carrito
+            self.carrito_ventas.append({
+                'producto_id': self.venta_producto_id,
+                'nombre': producto['nombre'],
+                'cantidad': cantidad,
+                'precio_unitario': precio,
+                'subtotal': cantidad * precio
+            })
+            
+            self.actualizar_tabla_carrito()
+            self.limpiar_formulario_producto()
+            messagebox.showinfo("Producto Agregado", f"{producto['nombre']} agregado al carrito")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al agregar al carrito: {str(e)}")
+    
+    def actualizar_tabla_carrito(self):
+        """Actualiza la tabla visual del carrito"""
+        # Limpiar tabla
+        for item in self.carrito_tree.get_children():
+            self.carrito_tree.delete(item)
+        
+        # Calcular total
+        total = 0
+        
+        # Llenar tabla
+        for item in self.carrito_ventas:
+            self.carrito_tree.insert('', 'end', values=(
+                item['nombre'][:30],  # Limitar nombre
+                item['cantidad'],
+                f"Q {item['precio_unitario']:,.2f}",
+                f"Q {item['subtotal']:,.2f}"
+            ))
+            total += item['subtotal']
+        
+        # Actualizar etiqueta de total
+        self.carrito_total_label.config(text=f"Q {total:,.2f}")
+    
+    def quitar_del_carrito(self):
+        """Quita el producto seleccionado del carrito"""
+        seleccion = self.carrito_tree.selection()
+        if not seleccion:
+            messagebox.showwarning("Advertencia", "Seleccione un producto del carrito")
+            return
+        
+        # Obtener índice del item seleccionado
+        item_index = self.carrito_tree.index(seleccion[0])
+        
+        # Eliminar del carrito
+        producto_nombre = self.carrito_ventas[item_index]['nombre']
+        del self.carrito_ventas[item_index]
+        
+        self.actualizar_tabla_carrito()
+        messagebox.showinfo("Producto Eliminado", f"{producto_nombre} eliminado del carrito")
+    
+    def limpiar_carrito(self):
+        """Limpia completamente el carrito"""
+        if not self.carrito_ventas:
+            messagebox.showinfo("Carrito Vacío", "El carrito ya está vacío")
+            return
+        
+        respuesta = messagebox.askyesno("Confirmar", 
+                                        "¿Está seguro de limpiar todo el carrito?")
+        if respuesta:
+            self.carrito_ventas = []
+            self.actualizar_tabla_carrito()
+            messagebox.showinfo("Carrito Limpiado", "Todos los productos fueron eliminados")
+    
+    def limpiar_formulario_producto(self):
+        """Limpia solo los campos de producto, cantidad y precio (MANTIENE cliente y fecha)"""
+        # Resetear ID de producto
+        self.venta_producto_id = None
+        
+        # Limpiar labels
+        self.venta_producto_label.config(text="")
+        self.stock_label.config(text="📦 Stock Disponible: 0", bootstyle="info")
+        
+        # Limpiar campo PRODUCTO visualmente
+        if hasattr(self, 'venta_producto_entry'):
+            self.venta_producto_entry.delete(0, 'end')
+        self.venta_producto_busqueda.set("")
+        
+        # Limpiar campo CANTIDAD
+        if hasattr(self, 'venta_cantidad_entry'):
+            self.venta_cantidad_entry.delete(0, 'end')
+            self.venta_cantidad_entry.insert(0, "0")
+        self.venta_cantidad.set(0)
+        
+        # Limpiar campo PRECIO (readonly - cambiar estado temporalmente)
+        if hasattr(self, 'venta_precio_entry'):
+            self.venta_precio_entry.config(state='normal')  # Habilitar temporalmente
+            self.venta_precio_entry.delete(0, 'end')
+            self.venta_precio_entry.insert(0, "0")
+            self.venta_precio_entry.config(state='readonly')  # Volver a readonly
+        self.venta_precio.set(0)
+        
+        # Destruir listbox de autocompletar si existe
+        if hasattr(self, 'producto_venta_listbox'):
+            try:
+                if self.producto_venta_listbox.winfo_exists():
+                    self.producto_venta_listbox.destroy()
+            except:
+                pass  # El listbox ya fue destruido
+        
+        # Enfocar el campo de producto para facilitar nueva búsqueda
+        if hasattr(self, 'venta_producto_entry'):
+            self.venta_producto_entry.focus_set()
+    
+    def limpiar_formulario_carrito(self):
+        """Limpia TODO el formulario del carrito (incluyendo cliente y fecha)"""
+        # Limpiar cliente
+        self.venta_cliente_busqueda.set("")
+        self.venta_cliente_label.config(text="")
+        self.venta_cliente_id = None
+        
+        # Limpiar productos
+        self.limpiar_formulario_producto()
+        
+        # Limpiar carrito
+        self.carrito_ventas = []
+        self.actualizar_tabla_carrito()
+        
+        # Restablecer fecha a hoy (usando DateEntry)
+        from datetime import date
+        self.venta_fecha_cal.entry.delete(0, 'end')
+        self.venta_fecha_cal.entry.insert(0, date.today().strftime('%d/%m/%Y'))
+        
+        messagebox.showinfo("Formulario Limpiado", "Todos los campos han sido limpiados")
+    
+    def limpiar_todo_formulario_ventas(self):
+        """Limpia TODO el formulario de ventas (cliente, productos, carrito) EXCEPTO fecha"""
+        # Limpiar cliente
+        self.venta_cliente_busqueda.set("")
+        self.venta_cliente_nit.set("")  # Limpiar campo NIT
+        self.venta_cliente_direccion.set("")  # Limpiar campo Dirección
+        self.venta_cliente_telefono.set("")  # Limpiar campo Teléfono
+        self.venta_cliente_label.config(text="")
+        self.venta_cliente_id = None
+        
+        # Limpiar productos
+        self.limpiar_formulario_producto()
+        
+        # Limpiar carrito
+        self.carrito_ventas = []
+        self.actualizar_tabla_carrito()
+        
+        # Mensaje de confirmación
+        messagebox.showinfo("Formulario Limpiado", "Todos los campos han sido limpiados\n(Fecha conservada)")
+
+    
+    def finalizar_venta(self):
+        """Finaliza la venta registrando todos los productos del carrito"""
+        from datetime import datetime
+        try:
+            # Validar que haya datos de cliente
+            nombre = self.venta_cliente_busqueda.get().strip()
+            nit = self.venta_cliente_nit.get().strip()
+            
+            if not nombre or not nit:
+                messagebox.showwarning("Advertencia", "Debe ingresar al menos el Nombre y NIT/DPI del cliente")
+                return
+            
+            # Si no hay cliente_id, significa que se escribió manualmente (NO se guardó con 💾)
+            # En este caso, la venta se registra SIN guardar el cliente en la base de datos
+            # Solo se usa como información temporal de la venta
+            
+            if not self.venta_cliente_id:
+                # Cliente nuevo - Se guardará automáticamente en la base de datos
+                messagebox.showinfo(
+                    "Cliente Nuevo",
+                    f"Se guardará el cliente en la base de datos:\n\n"
+                    f"Nombre: {nombre}\n"
+                    f"NIT/DPI: {nit}\n\n"
+                    f"El cliente estará disponible para futuras ventas."
+                )
+                # Guardar cliente automáticamente
+                direccion = self.venta_cliente_direccion.get().strip()
+                telefono = self.venta_cliente_telefono.get().strip()
+                
+                exito, mensaje = self.controller.crear_cliente(nombre, nit, direccion, telefono)
+                if exito:
+                    # Buscar el cliente recién creado
+                    clientes = self.controller.buscar_cliente(nombre)
+                    if clientes:
+                        nuevo_cliente = clientes[-1]
+                        self.venta_cliente_id = nuevo_cliente['id']
+                else:
+                    messagebox.showerror("Error", f"No se pudo registrar el cliente: {mensaje}")
+                    return
+            
+            # Validar carrito
+            if not self.carrito_ventas:
+                messagebox.showwarning("Advertencia", "El carrito está vacío")
+                return
+            
+            # Confirmar venta
+            total = sum(item['subtotal'] for item in self.carrito_ventas)
+            respuesta = messagebox.askyesno("Confirmar Venta",
+                                           f"¿Confirmar venta?\n\n"
+                                           f"Cliente: {self.venta_cliente_label.cget('text')}\n"
+                                           f"Productos: {len(self.carrito_ventas)}\n"
+                                           f"Total: Q {total:,.2f}")
+            
+            if not respuesta:
+                return
+            
+            # Obtener fecha del calendario y agregar hora actual
+            fecha_cal = self.venta_fecha_cal.entry.get()  # formato dd/mm/yyyy
+            hora_actual = datetime.now().strftime('%H:%M:%S')
+            fecha_manual = f"{fecha_cal} {hora_actual}"
+            
+            # Registrar venta con carrito
+            exito, mensaje = self.controller.registrar_venta_con_carrito(
+                self.venta_cliente_id,
+                self.carrito_ventas,
+                fecha_manual
+            )
+            
+            if exito:
+                messagebox.showinfo("Venta Exitosa", mensaje)
+                
+                # Limpiar carrito, formulario de productos Y datos del cliente
+                self.carrito_ventas = []
+                self.actualizar_tabla_carrito()
+                self.limpiar_formulario_producto()
+                
+                # Limpiar datos del cliente para la siguiente venta
+                self.venta_cliente_busqueda.set("")
+                self.venta_cliente_nit.set("")
+                self.venta_cliente_direccion.set("")
+                self.venta_cliente_telefono.set("")
+                self.venta_cliente_label.config(text="")
+                self.venta_cliente_id = None
+                
+                # Actualizar tablas
+                self.refresh_ventas()
+                self.refresh_productos()
+                self.refresh_caja()
+                self.actualizar_resumen()
+            else:
+                messagebox.showerror("Error", mensaje)
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error inesperado: {str(e)}")
+    
     def registrar_venta(self):
+        """Registra una nueva venta (MÉTODO LEGACY - ahora usa carrito)"""
+        from datetime import datetime
+        try:
+            # Validar cliente
+            if not self.venta_cliente_id:
+                messagebox.showwarning("Advertencia", "Busque y seleccione un cliente")
+                return
+            
+            # Validar producto
+            if not self.venta_producto_id:
+                messagebox.showwarning("Advertencia", "Busque y seleccione un producto")
+                return
+            
+            cantidad = self.venta_cantidad.get()
+            precio = self.venta_precio.get()
+            
+            # Validar cantidad
+            if cantidad <= 0:
+                messagebox.showwarning("Advertencia", "La cantidad debe ser mayor a 0")
+                return
+            
+            # Validar precio
+            if precio <= 0:
+                messagebox.showwarning("Advertencia", "El precio debe ser mayor a 0")
+                return
+            
+            # Obtener fecha del calendario y agregar hora actual
+            fecha_cal = self.venta_fecha_cal.entry.get()  # formato dd/mm/yyyy
+            hora_actual = datetime.now().strftime('%H:%M:%S')
+            fecha_manual = f"{fecha_cal} {hora_actual}"
+            
+            exito, mensaje = self.controller.registrar_venta(
+                self.venta_producto_id, cantidad, precio, self.venta_cliente_id, fecha_manual
+            )
+            
+            if exito:
+                messagebox.showinfo("Éxito", mensaje)
+                # Limpiar formulario
+                self.venta_cantidad.set(0)
+                self.venta_precio.set(0)
+                self.venta_producto_busqueda.set("")
+                self.venta_cliente_busqueda.set("")
+                self.venta_producto_label.config(text="")
+                self.venta_cliente_label.config(text="")
+                self.stock_label.config(text="📦 Stock Disponible: 0")
+                self.venta_producto_id = None
+                self.venta_cliente_id = None
+                self.refresh_ventas()
+                self.refresh_productos()
+                self.refresh_caja()  # Actualizar tabla de caja
+                self.actualizar_resumen()
+            else:
+                messagebox.showerror("Error", mensaje)
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error inesperado: {str(e)}")
+    
+    def ver_detalle_venta(self, event=None):
+        """Muestra los detalles completos de una venta (todos los productos)"""
+        seleccion = self.ventas_tree.selection()
+        if not seleccion:
+            return
+        
+        try:
+            item = self.ventas_tree.item(seleccion[0])
+            valores = item['values']
+            venta_id = int(valores[0].split('REF')[1])  # Extraer ID de la referencia
+            
+            # Obtener venta completa con detalles
+            venta = self.controller.obtener_venta_por_id(venta_id)
+            
+            if not venta:
+                messagebox.showerror("Error", "No se pudo obtener la información de la venta")
+                return
+            
+            # Crear ventana de detalles
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"📋 Detalle de Venta - {venta['referencia_no']}")
+            
+            # Calcular posición centrada ANTES de mostrar la ventana
+            width = 700
+            height = 600
+            x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+            y = (dialog.winfo_screenheight() // 2) - (height // 2)
+            dialog.geometry(f'{width}x{height}+{x}+{y}')
+            
+            dialog.transient(self.root)
+            dialog.grab_set()
+            self.agregar_icono(dialog)
+            
+            # Frame principal
+            main_frame = tb.Frame(dialog, padding=20)
+            main_frame.pack(fill='both', expand=True)
+            
+            # Información general
+            info_frame = tb.Labelframe(main_frame, text="Información General", padding=15)
+            info_frame.pack(fill='x', pady=(0, 10))
+            
+            tb.Label(info_frame, text=f"Referencia: {venta['referencia_no']}", 
+                    font=('Segoe UI', 11, 'bold')).pack(anchor='w', pady=2)
+            tb.Label(info_frame, text=f"Cliente: {venta['cliente_nombre']}", 
+                    font=('Segoe UI', 10)).pack(anchor='w', pady=2)
+            
+            # Mostrar NIT/DPI si está disponible
+            nit_dpi = venta.get('cliente_nit', '').strip()
+            if nit_dpi:
+                tb.Label(info_frame, text=f"NIT/DPI: {nit_dpi}", 
+                        font=('Segoe UI', 10)).pack(anchor='w', pady=2)
+            
+            tb.Label(info_frame, text=f"Fecha: {venta['fecha']}", 
+                    font=('Segoe UI', 10)).pack(anchor='w', pady=2)
+            tb.Label(info_frame, text=f"Estado: {venta['estado']}", 
+                    font=('Segoe UI', 10)).pack(anchor='w', pady=2)
+            
+            # Productos vendidos
+            productos_frame = tb.Labelframe(main_frame, text="Productos Vendidos", padding=15)
+            productos_frame.pack(fill='both', expand=True, pady=(0, 10))
+            
+            # Tabla de productos
+            tree_frame = tb.Frame(productos_frame)
+            tree_frame.pack(fill='both', expand=True)
+            
+            cols = ('Producto', 'Cantidad', 'Precio Unit.', 'Subtotal')
+            detalle_tree = tb.Treeview(tree_frame, columns=cols, show='headings', height=6)
+            
+            for col in cols:
+                detalle_tree.heading(col, text=col)
+                detalle_tree.column(col, width=150 if col == 'Producto' else 120, 
+                                   anchor='w' if col == 'Producto' else 'e')
+            
+            scrollbar = tb.Scrollbar(tree_frame, orient='vertical', command=detalle_tree.yview)
+            detalle_tree.configure(yscrollcommand=scrollbar.set)
+            
+            detalle_tree.pack(side='left', fill='both', expand=True)
+            scrollbar.pack(side='right', fill='y')
+            
+            # Llenar tabla con productos
+            for detalle in venta['detalles']:
+                detalle_tree.insert('', 'end', values=(
+                    detalle['producto_nombre'],
+                    detalle['cantidad'],
+                    f"Q {detalle['precio_unitario']:,.2f}",
+                    f"Q {detalle['subtotal']:,.2f}"
+                ))
+            
+            # Total
+            total_frame = tb.Frame(main_frame)
+            total_frame.pack(fill='x')
+            
+            tb.Label(total_frame, text="TOTAL:", 
+                    font=('Segoe UI', 14, 'bold')).pack(side='left', padx=10)
+            tb.Label(total_frame, text=f"Q {venta['total']:,.2f}", 
+                    font=('Segoe UI', 16, 'bold'), bootstyle="success").pack(side='left')
+            
+            # Botón cerrar
+            tb.Button(main_frame, text="Cerrar", command=dialog.destroy, 
+                     bootstyle="secondary", width=15).pack(pady=10)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al mostrar detalles: {str(e)}")
+    
+    def mostrar_menu_contextual_producto(self, event):
         """Registra una nueva venta"""
         from datetime import datetime
         try:
@@ -3492,6 +4202,7 @@ class MainWindow:
                 self.venta_cliente_id = None
                 self.refresh_ventas()
                 self.refresh_productos()
+                self.refresh_caja()  # Actualizar tabla de caja
                 self.actualizar_resumen()
             else:
                 messagebox.showerror("Error", mensaje)
@@ -3499,8 +4210,124 @@ class MainWindow:
         except Exception as e:
             messagebox.showerror("Error", f"Error inesperado: {str(e)}")
     
+    def mostrar_menu_contextual_producto(self, event):
+        """Muestra un menú contextual al hacer clic derecho en un producto"""
+        # Identificar en qué fila se hizo clic
+        item = self.productos_tree.identify_row(event.y)
+        
+        if not item:
+            return
+        
+        # Seleccionar la fila donde se hizo clic derecho
+        self.productos_tree.selection_set(item)
+        self.productos_tree.focus(item)
+        
+        # Obtener datos del producto
+        valores = self.productos_tree.item(item)['values']
+        producto_nombre = valores[2] if len(valores) > 2 else "Producto"
+        
+        # Crear menú contextual
+        menu = tk.Menu(self.root, tearoff=0)
+        
+        menu.add_command(
+            label=f"👁️  Ver Detalles de '{producto_nombre[:30]}...'",
+            command=lambda: self.ver_detalles_desde_menu(item),
+            font=('Segoe UI', 10, 'bold')
+        )
+        
+        menu.add_separator()
+        
+        menu.add_command(
+            label="✏️  Editar Producto",
+            command=lambda: self.editar_desde_menu(item),
+            font=('Segoe UI', 10)
+        )
+        
+        menu.add_separator()
+        
+        menu.add_command(
+            label="🔴  Desactivar Producto",
+            command=self.desactivar_producto,
+            font=('Segoe UI', 10)
+        )
+        
+        menu.add_command(
+            label="🟢  Activar Producto",
+            command=self.activar_producto,
+            font=('Segoe UI', 10)
+        )
+        
+        # Mostrar el menú en la posición del cursor
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+    
+    def ver_detalles_desde_menu(self, item):
+        """Ver detalles desde el menú contextual"""
+        try:
+            # El item ya está seleccionado, obtener sus datos
+            valores = self.productos_tree.item(item)['values']
+            producto_id = valores[0]
+            
+            # Obtener el producto completo de la base de datos
+            producto = self.controller.obtener_producto_por_id(producto_id)
+            
+            if producto:
+                # Usar la función reutilizable
+                self.mostrar_ventana_detalles(producto)
+            else:
+                messagebox.showerror("Error", "No se pudo obtener la información del producto")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al mostrar detalles: {str(e)}")
+    
+    def editar_desde_menu(self, item):
+        """Editar producto desde el menú contextual - Abre el generador SKU para edición"""
+        try:
+            # El item ya está seleccionado, obtener sus datos
+            valores = self.productos_tree.item(item)['values']
+            producto_id = int(valores[0])
+            producto = self.controller.obtener_producto_por_id(producto_id)
+            
+            if producto:
+                # Guardar ID para edición
+                self.producto_seleccionado = producto_id
+                
+                # Cargar datos SKU en la estructura temporal
+                self.sku_data = {
+                    'nombre': producto.get('nombre', ''),
+                    'categoria': producto.get('categoria', ''),
+                    'marca': producto.get('marca', ''),
+                    'color': producto.get('color', ''),
+                    'tamaño': producto.get('tamaño', ''),
+                    'dibujo': producto.get('dibujo', ''),
+                    'cod_color': producto.get('cod_color', '')
+                }
+                
+                # Cargar también al formulario principal (para mantener sincronizado)
+                self.producto_codigo.set(producto.get('codigo', ''))
+                self.producto_nombre.set(producto['nombre'])
+                self.producto_categoria.set(producto.get('categoria', ''))
+                self.producto_precio_compra.set(producto['precio_compra'])
+                self.producto_ganancia.set(producto['porcentaje_ganancia'])
+                self.producto_precio_venta_manual.set(producto['precio_venta'])
+                self.producto_tipo_calculo.set("porcentaje")
+                self.cambiar_tipo_calculo()
+                
+                # Abrir el generador SKU con los datos cargados
+                self.abrir_generador_sku()
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al cargar producto para edición: {str(e)}")
+    
+    def on_producto_click(self, event):
+        """Maneja el clic simple para seleccionar un producto visualmente"""
+        # Este método asegura que el producto se marque como seleccionado
+        # El Treeview ya maneja la selección automáticamente, este bind es solo para asegurar
+        pass
+    
     def seleccionar_producto(self, event):
-        """Selecciona un producto de la lista para edición"""
+        """Selecciona un producto de la lista para edición (doble clic) - Abre el generador SKU"""
         try:
             seleccion = self.productos_tree.selection()
             if seleccion:
@@ -3509,27 +4336,63 @@ class MainWindow:
                 producto = self.controller.obtener_producto_por_id(producto_id)
                 
                 if producto:
+                    # Guardar ID para edición
                     self.producto_seleccionado = producto_id
-                    codigo = producto.get('codigo', '')
-                    self.producto_codigo.set(codigo)
+                    
+                    # Cargar datos SKU en la estructura temporal
+                    self.sku_data = {
+                        'nombre': producto.get('nombre', ''),
+                        'categoria': producto.get('categoria', ''),
+                        'marca': producto.get('marca', ''),
+                        'color': producto.get('color', ''),
+                        'tamaño': producto.get('tamaño', ''),
+                        'dibujo': producto.get('dibujo', ''),
+                        'cod_color': producto.get('cod_color', '')
+                    }
+                    
+                    # Cargar también al formulario principal (para mantener sincronizado)
+                    self.producto_codigo.set(producto.get('codigo', ''))
                     self.producto_nombre.set(producto['nombre'])
                     self.producto_categoria.set(producto.get('categoria', ''))
                     self.producto_precio_compra.set(producto['precio_compra'])
                     self.producto_ganancia.set(producto['porcentaje_ganancia'])
-                    # Calcular el precio de venta manual basado en los datos
-                    precio_venta = producto['precio_venta']
-                    self.producto_precio_venta_manual.set(precio_venta)
-                    # Mantener en modo porcentaje por defecto
+                    self.producto_precio_venta_manual.set(producto['precio_venta'])
                     self.producto_tipo_calculo.set("porcentaje")
                     self.cambiar_tipo_calculo()
                     
-                    # Parsear el código SKU para cargar datos en el generador
-                    self.parsear_codigo_sku(codigo, producto['nombre'], producto.get('categoria', ''))
+                    # Abrir el generador SKU con los datos cargados
+                    self.abrir_generador_sku()
         except:
             pass
     
+    def cargar_datos_sku_desde_bd(self, producto):
+        """Carga los datos SKU desde la base de datos directamente"""
+        try:
+            # Cargar TODOS los datos reales desde la BD
+            self.sku_data = {
+                'nombre': producto.get('nombre', ''),
+                'categoria': producto.get('categoria', ''),
+                'marca': producto.get('marca', ''),
+                'color': producto.get('color', ''),
+                'tamaño': producto.get('tamaño', ''),
+                'dibujo': producto.get('dibujo', ''),
+                'cod_color': producto.get('cod_color', '')
+            }
+                        
+        except Exception as e:
+            # En caso de error, cargar valores vacíos
+            self.sku_data = {
+                'nombre': producto.get('nombre', ''),
+                'categoria': producto.get('categoria', ''),
+                'marca': '',
+                'color': '',
+                'tamaño': '',
+                'dibujo': '',
+                'cod_color': ''
+            }
+    
     def parsear_codigo_sku(self, codigo, nombre, categoria):
-        """Parsea un código SKU y extrae los componentes para el generador"""
+        """Parsea un código SKU y extrae los componentes para el generador (DEPRECADO - usar cargar_datos_sku_desde_bd)"""
         try:
             # Limpiar datos actuales
             self.sku_data = {
@@ -3590,17 +4453,267 @@ class MainWindow:
                 'cod_color': ''
             }
     
-    def limpiar_formulario_producto(self):
-        """Limpia el formulario de productos"""
+    def mostrar_menu_compras(self, event):
+        """Muestra menú contextual en la tabla de compras"""
+        # Identificar el item clickeado
+        item = self.compras_tree.identify_row(event.y)
+        if item:
+            # Seleccionar el item
+            self.compras_tree.selection_set(item)
+            self.compras_tree.focus(item)
+            
+            # Obtener los valores de la fila
+            valores = self.compras_tree.item(item)['values']
+            if len(valores) >= 4:  # Asegurar que hay datos
+                compra_id = valores[0]  # ID de la compra
+                producto_nombre = valores[3]  # Nombre del producto
+                
+                # Buscar la compra completa para obtener el producto_id
+                compras = self.controller.obtener_compras()
+                compra = next((c for c in compras if c['id'] == compra_id), None)
+                
+                if compra and compra.get('producto_id'):
+                    producto_id = compra['producto_id']
+                    producto = self.controller.obtener_producto_por_id(producto_id)
+                    
+                    if producto:
+                        # Crear menú contextual
+                        menu = tk.Menu(self.root, tearoff=0)
+                        menu.add_command(label="👁️ Ver Detalles del Producto", 
+                                       command=lambda: self.mostrar_ventana_detalles(producto))
+                        
+                        # Mostrar menú en la posición del mouse
+                        menu.post(event.x_root, event.y_root)
+    
+    def mostrar_menu_ventas(self, event):
+        """Muestra menú contextual en la tabla de ventas"""
+        # Identificar el item clickeado
+        item = self.ventas_tree.identify_row(event.y)
+        if item:
+            # Seleccionar el item
+            self.ventas_tree.selection_set(item)
+            self.ventas_tree.focus(item)
+            
+            # Obtener el código del producto de la fila
+            valores = self.ventas_tree.item(item)['values']
+            if len(valores) >= 3:  # Asegurar que hay datos
+                codigo_producto = valores[2]  # Columna 'Código' (producto_codigo)
+                
+                if codigo_producto:
+                    # Buscar el producto por código
+                    productos = self.controller.obtener_productos()
+                    producto = next((p for p in productos if p['codigo'] == codigo_producto), None)
+                    
+                    if producto:
+                        # Crear menú contextual
+                        menu = tk.Menu(self.root, tearoff=0)
+                        menu.add_command(label="👁️ Ver Detalles del Producto", 
+                                       command=lambda: self.mostrar_ventana_detalles(producto))
+                        
+                        # Mostrar menú en la posición del mouse
+                        menu.post(event.x_root, event.y_root)
+    
+    def mostrar_menu_alertas(self, event):
+        """Muestra menú contextual en la tabla de alertas"""
+        # Identificar el item clickeado
+        item = self.stock_tree.identify_row(event.y)
+        if item:
+            # Seleccionar el item
+            self.stock_tree.selection_set(item)
+            self.stock_tree.focus(item)
+            
+            # Obtener el código del producto de la fila
+            valores = self.stock_tree.item(item)['values']
+            if len(valores) >= 2:  # Asegurar que hay datos
+                codigo_producto = valores[1]  # Columna 'Código'
+                
+                # Buscar el producto por código
+                productos = self.controller.obtener_productos()
+                producto = next((p for p in productos if p['codigo'] == codigo_producto), None)
+                
+                if producto:
+                    # Crear menú contextual
+                    menu = tk.Menu(self.root, tearoff=0)
+                    menu.add_command(label="👁️ Ver Detalles del Producto", 
+                                   command=lambda: self.ver_detalles_producto_por_codigo(codigo_producto))
+                    
+                    # Mostrar menú en la posición del mouse
+                    menu.post(event.x_root, event.y_root)
+    
+    def ver_detalles_producto_por_codigo(self, codigo):
+        """Abre la ventana de detalles de un producto dado su código"""
+        try:
+            productos = self.controller.obtener_productos()
+            producto = next((p for p in productos if p['codigo'] == codigo), None)
+            
+            if producto:
+                self.mostrar_ventana_detalles(producto)
+            else:
+                messagebox.showwarning("Advertencia", f"No se encontró el producto con código: {codigo}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al buscar producto: {str(e)}")
+    
+    def mostrar_ventana_detalles(self, producto):
+        """Muestra la ventana de detalles de un producto (reutilizable)"""
+        if not producto:
+            messagebox.showerror("Error", "No se pudo obtener la información del producto")
+            return
+        
+        # Crear ventana modal (oculta primero para evitar parpadeo)
+        detalle_window = tk.Toplevel(self.root)
+        detalle_window.withdraw()  # Ocultar temporalmente
+        detalle_window.title(f"📋 Detalles del Producto - {producto['nombre']}")
+        detalle_window.geometry("550x650")
+        detalle_window.resizable(False, False)
+        detalle_window.transient(self.root)
+        detalle_window.grab_set()
+        
+        # Agregar icono
+        try:
+            icon_path = resource_path("inventario.ico")
+            if os.path.exists(icon_path):
+                detalle_window.iconbitmap(icon_path)
+        except:
+            pass
+        
+        # Frame principal con scroll
+        main_frame = ttk.Frame(detalle_window, padding="15")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Canvas y Scrollbar
+        canvas = tk.Canvas(main_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=500)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Ajustar ancho del canvas cuando cambie el tamaño
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
+        
+        # Habilitar scroll con mousewheel en toda la ventana
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        def bind_mousewheel(event=None):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        def unbind_mousewheel(event=None):
+            canvas.unbind_all("<MouseWheel>")
+        
+        # Bind cuando el mouse entra/sale de la ventana
+        detalle_window.bind('<Enter>', bind_mousewheel)
+        detalle_window.bind('<Leave>', unbind_mousewheel)
+        
+        # === SECCIÓN 1: INFORMACIÓN BÁSICA ===
+        frame_basico = ttk.LabelFrame(scrollable_frame, text="📌 Información Básica", padding="15")
+        frame_basico.pack(fill=tk.X, padx=10, pady=10)
+        
+        info_basica = [
+            ("🆔 ID:", str(producto['id'])),
+            ("🏷️ Código SKU:", producto.get('codigo', 'N/A')),
+            ("📦 Nombre:", producto['nombre']),
+            ("📂 Categoría:", producto.get('categoria', 'N/A')),
+            ("🔘 Estado:", "🟢 Activo" if producto.get('activo', 1) == 1 else "🔴 Inactivo")
+        ]
+        
+        for i, (label, valor) in enumerate(info_basica):
+            ttk.Label(frame_basico, text=label, font=('Segoe UI', 10, 'bold')).grid(row=i, column=0, sticky="w", pady=5)
+            ttk.Label(frame_basico, text=valor, font=('Segoe UI', 10)).grid(row=i, column=1, sticky="w", padx=10, pady=5)
+        
+        # === SECCIÓN 2: DATOS SKU ===
+        frame_sku = ttk.LabelFrame(scrollable_frame, text="🏭 Datos del SKU", padding="15")
+        frame_sku.pack(fill=tk.X, padx=10, pady=10)
+        
+        datos_sku = [
+            ("🏢 Marca:", producto.get('marca', 'N/A')),
+            ("🎨 Color:", producto.get('color', 'N/A')),
+            ("📏 Tamaño:", producto.get('tamaño', 'N/A')),
+            ("🖼️ Dibujo:", producto.get('dibujo', 'N/A')),
+            ("🔢 Código Color:", producto.get('cod_color', 'N/A'))
+        ]
+        
+        for i, (label, valor) in enumerate(datos_sku):
+            ttk.Label(frame_sku, text=label, font=('Segoe UI', 10, 'bold')).grid(row=i, column=0, sticky="w", pady=5)
+            ttk.Label(frame_sku, text=valor, font=('Segoe UI', 10)).grid(row=i, column=1, sticky="w", padx=10, pady=5)
+        
+        # === SECCIÓN 3: INFORMACIÓN FINANCIERA ===
+        frame_financiero = ttk.LabelFrame(scrollable_frame, text="💰 Información Financiera", padding="15")
+        frame_financiero.pack(fill=tk.X, padx=10, pady=10)
+        
+        precio_compra = float(producto['precio_compra'])
+        precio_venta = float(producto['precio_venta'])
+        ganancia_unitaria = precio_venta - precio_compra
+        porcentaje_ganancia = float(producto['porcentaje_ganancia'])
+        
+        info_financiera = [
+            ("💵 Precio de Compra:", f"Q {precio_compra:,.2f}"),
+            ("💲 Precio de Venta:", f"Q {precio_venta:,.2f}"),
+            ("📈 Porcentaje de Ganancia:", f"{porcentaje_ganancia:.2f}%"),
+            ("💎 Ganancia Unitaria:", f"Q {ganancia_unitaria:,.2f}")
+        ]
+        
+        for i, (label, valor) in enumerate(info_financiera):
+            ttk.Label(frame_financiero, text=label, font=('Segoe UI', 10, 'bold')).grid(row=i, column=0, sticky="w", pady=5)
+            valor_label = ttk.Label(frame_financiero, text=valor, font=('Segoe UI', 10))
+            valor_label.grid(row=i, column=1, sticky="w", padx=10, pady=5)
+            if "Ganancia" in label:
+                valor_label.config(foreground="green")
+        
+        # === SECCIÓN 4: INVENTARIO ===
+        frame_inventario = ttk.LabelFrame(scrollable_frame, text="📊 Información de Inventario", padding="15")
+        frame_inventario.pack(fill=tk.X, padx=10, pady=10)
+        
+        stock_actual = producto.get('stock_actual', 0)
+        valor_inventario = stock_actual * precio_compra
+        valor_venta_total = stock_actual * precio_venta
+        
+        info_inventario = [
+            ("📦 Stock Actual:", f"{stock_actual} unidades"),
+            ("💰 Valor en Inventario:", f"Q {valor_inventario:,.2f}"),
+            ("💵 Valor de Venta Total:", f"Q {valor_venta_total:,.2f}")
+        ]
+        
+        for i, (label, valor) in enumerate(info_inventario):
+            ttk.Label(frame_inventario, text=label, font=('Segoe UI', 10, 'bold')).grid(row=i, column=0, sticky="w", pady=5)
+            ttk.Label(frame_inventario, text=valor, font=('Segoe UI', 10)).grid(row=i, column=1, sticky="w", padx=10, pady=5)
+        
+        # Empaquetar canvas y scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Botón de cerrar
+        btn_frame = ttk.Frame(detalle_window)
+        btn_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
+        
+        ttk.Button(
+            btn_frame,
+            text="❌ Cerrar",
+            command=lambda: [unbind_mousewheel(), detalle_window.destroy()],
+            width=15
+        ).pack()
+        
+        # Centrar ventana
+        self.centrar_ventana(detalle_window)
+        
+        # Mostrar ventana centrada
+        detalle_window.deiconify()
+    
+    def limpiar_formulario_producto_tab(self):
+        """Limpia el formulario de productos (TAB PRODUCTOS)"""
         self.producto_codigo.set("")
         self.producto_nombre.set("")
         self.producto_categoria.set("")
         self.producto_precio_compra.set(0)
         self.producto_ganancia.set(0)
         self.producto_precio_venta_manual.set(0)
-        self.producto_tipo_calculo.set("porcentaje")
-        self.precio_venta_label.config(text="Precio de Venta: Q 0.00")
-        self.monto_ganancia_label.config(text="Ganancia: Q 0.00")
         self.producto_seleccionado = None
         
         # Limpiar datos guardados del SKU
@@ -3614,74 +4727,211 @@ class MainWindow:
             'cod_color': ''
         }
         
+        # IMPORTANTE: Establecer el tipo de cálculo ANTES de llamar a cambiar_tipo_calculo
+        self.producto_tipo_calculo.set("precio")  # Mantener 'precio' por defecto
+        
+        # Ahora sí, actualizar la vista
         self.cambiar_tipo_calculo()  # Resetear la vista
+        
+        # Actualizar etiquetas
+        self.precio_venta_label.config(text="Precio de Venta: Q 0.00")
+        self.monto_ganancia_label.config(text="Ganancia: Q 0.00")
     
-    def mostrar_tooltip_sku(self, event):
-        """Muestra tooltip con desglose del SKU al pasar el mouse sobre la columna de código"""
+    
+    def ver_detalles_producto(self):
+        """Muestra una ventana con todos los detalles del producto seleccionado incluyendo datos SKU"""
+        # Obtener selección
+        selection = self.productos_tree.selection()
+        
+        if not selection:
+            messagebox.showinfo("💡 Cómo ver detalles de productos", 
+                "Forma de ver los detalles de un producto:\n\n" +
+                "🖱️ OPCIÓN 1: Clic Derecho\n" +
+                "   • Haga clic derecho sobre cualquier producto\n" +
+                "   • Seleccione '👁️ Ver Detalles' en el menú\n\n"
+                "💡 Tip: Doble clic en una fila para editarla directamente")
+            return
+        
         try:
-            # Identificar sobre qué fila y columna está el mouse
-            region = self.productos_tree.identify('region', event.x, event.y)
-            if region != 'cell':
-                self.ocultar_tooltip_sku(None)
+            item = self.productos_tree.item(selection[0])
+            producto_id = item['values'][0]
+            
+            # Obtener datos completos del producto desde la BD
+            producto = self.controller.obtener_producto_por_id(producto_id)
+            
+            if not producto:
+                messagebox.showerror("Error", "No se pudo obtener la información del producto")
                 return
             
-            column = self.productos_tree.identify_column(event.x)
-            item = self.productos_tree.identify_row(event.y)
+            # Crear ventana de detalles
+            dialog = tk.Toplevel(self.root)
+            dialog.title(f"👁️ Detalles del Producto - {producto['nombre']}")
+            dialog.geometry("650x750")
+            dialog.transient(self.root)
+            dialog.withdraw()
+            dialog.grab_set()
+            self.agregar_icono(dialog)
             
-            # Solo mostrar tooltip en la columna de Código (columna #1)
-            if column != '#1' or not item:
-                self.ocultar_tooltip_sku(None)
-                return
+            # Frame principal con scroll
+            main_frame = tb.Frame(dialog, padding=20)
+            main_frame.pack(fill='both', expand=True)
             
-            # Obtener datos de la fila
-            values = self.productos_tree.item(item)['values']
-            if not values or len(values) < 7:
-                self.ocultar_tooltip_sku(None)
-                return
+            # Canvas con scrollbar
+            canvas = tk.Canvas(main_frame, highlightthickness=0)
+            scrollbar = tb.Scrollbar(main_frame, orient="vertical", command=canvas.yview, bootstyle="primary-round")
+            content_frame = tb.Frame(canvas)
             
-            producto_id = values[0]
-            codigo = values[1]
-            nombre = values[2]
-            categoria = values[3]
-            marca = values[4] if values[4] else 'N/A'
-            color = values[5] if values[5] else 'N/A'
-            tamaño = values[6] if values[6] else 'N/A'
+            content_frame.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
             
-            # Si no hay código, no mostrar tooltip
-            if not codigo or codigo == '':
-                self.ocultar_tooltip_sku(None)
-                return
+            canvas.create_window((0, 0), window=content_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
             
-            # Crear texto del tooltip con formato bonito
-            tooltip_text = f"📦 DESGLOSE DEL CÓDIGO SKU\n"
-            tooltip_text += f"{'─' * 35}\n\n"
-            tooltip_text += f"Código Completo: {codigo}\n\n"
-            tooltip_text += f"🏷️  Nombre:     {nombre}\n"
-            tooltip_text += f"📁  Categoría:  {categoria}\n"
-            tooltip_text += f"🏭  Marca:      {marca}\n"
-            tooltip_text += f"🎨  Color:      {color}\n"
-            tooltip_text += f"📏  Tamaño:     {tamaño}"
+            # Habilitar scroll con rueda del mouse
+            def _on_mousewheel(event):
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
             
-            # Calcular posición del tooltip (al lado del cursor)
-            x = event.x_root + 15
-            y = event.y_root + 10
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
             
-            # Ocultar tooltip anterior si existe
-            if self.tooltip_sku:
-                self.tooltip_sku.hidetip()
+            # Título principal
+            tb.Label(
+                content_frame,
+                text="📦 INFORMACIÓN COMPLETA DEL PRODUCTO",
+                font=('Segoe UI', 16, 'bold'),
+                bootstyle="primary"
+            ).pack(pady=(0, 20))
             
-            # Crear y mostrar nuevo tooltip
-            self.tooltip_sku = ToolTip(self.productos_tree)
-            self.tooltip_sku.showtip(tooltip_text, x, y)
+            # === INFORMACIÓN BÁSICA ===
+            info_basica = tb.Labelframe(
+                content_frame,
+                text="📋 Información Básica",
+                padding=15,
+                bootstyle="info"
+            )
+            info_basica.pack(fill='x', pady=(0, 15))
+            
+            # Función helper para crear fila de información
+            def crear_fila_info(parent, label, valor, row):
+                tb.Label(
+                    parent,
+                    text=f"{label}:",
+                    font=('Segoe UI', 10, 'bold'),
+                    anchor='e'
+                ).grid(row=row, column=0, sticky='e', padx=(10, 15), pady=8)
+                
+                tb.Label(
+                    parent,
+                    text=str(valor) if valor else 'N/A',
+                    font=('Segoe UI', 10),
+                    anchor='w'
+                ).grid(row=row, column=1, sticky='w', padx=(0, 10), pady=8)
+            
+            crear_fila_info(info_basica, "ID", producto['id'], 0)
+            crear_fila_info(info_basica, "Código SKU", producto.get('codigo', 'N/A'), 1)
+            crear_fila_info(info_basica, "Nombre", producto['nombre'], 2)
+            crear_fila_info(info_basica, "Categoría", producto.get('categoria', 'N/A'), 3)
+            crear_fila_info(info_basica, "Estado", "ACTIVO" if producto.get('activo', 1) == 1 else "INACTIVO", 4)
+            
+            info_basica.columnconfigure(0, minsize=150)
+            info_basica.columnconfigure(1, weight=1)
+            
+            # === DATOS DEL SKU ===
+            sku_frame = tb.Labelframe(
+                content_frame,
+                text="🏷️ Datos del Código SKU",
+                padding=15,
+                bootstyle="success"
+            )
+            sku_frame.pack(fill='x', pady=(0, 15))
+            
+            crear_fila_info(sku_frame, "🏭 Marca", producto.get('marca', 'N/A'), 0)
+            crear_fila_info(sku_frame, "🎨 Color", producto.get('color', 'N/A'), 1)
+            crear_fila_info(sku_frame, "📏 Tamaño", producto.get('tamaño', 'N/A'), 2)
+            crear_fila_info(sku_frame, "🎭 Dibujo", producto.get('dibujo', 'N/A'), 3)
+            crear_fila_info(sku_frame, "🔢 Código de Color", producto.get('cod_color', 'N/A'), 4)
+            
+            sku_frame.columnconfigure(0, minsize=150)
+            sku_frame.columnconfigure(1, weight=1)
+            
+            # === INFORMACIÓN FINANCIERA ===
+            financiera_frame = tb.Labelframe(
+                content_frame,
+                text="💰 Información Financiera",
+                padding=15,
+                bootstyle="warning"
+            )
+            financiera_frame.pack(fill='x', pady=(0, 15))
+            
+            precio_compra = producto['precio_compra']
+            porcentaje_ganancia = producto['porcentaje_ganancia']
+            precio_venta = producto['precio_venta']
+            monto_ganancia = producto.get('monto_ganancia', precio_venta - precio_compra)
+            
+            crear_fila_info(financiera_frame, "Precio de Compra", f"Q {precio_compra:,.2f}", 0)
+            crear_fila_info(financiera_frame, "Porcentaje de Ganancia", f"{porcentaje_ganancia:.2f}%", 1)
+            crear_fila_info(financiera_frame, "Monto de Ganancia", f"Q {monto_ganancia:,.2f}", 2)
+            crear_fila_info(financiera_frame, "Precio de Venta", f"Q {precio_venta:,.2f}", 3)
+            
+            financiera_frame.columnconfigure(0, minsize=150)
+            financiera_frame.columnconfigure(1, weight=1)
+            
+            # === INVENTARIO ===
+            inventario_frame = tb.Labelframe(
+                content_frame,
+                text="📦 Inventario",
+                padding=15,
+                bootstyle="secondary"
+            )
+            inventario_frame.pack(fill='x', pady=(0, 15))
+            
+            stock_actual = producto.get('stock_actual', 0)
+            stock_color = "danger" if stock_actual <= 5 else "success"
+            
+            tb.Label(
+                inventario_frame,
+                text="Stock Actual:",
+                font=('Segoe UI', 10, 'bold'),
+                anchor='e'
+            ).grid(row=0, column=0, sticky='e', padx=(10, 15), pady=8)
+            
+            tb.Label(
+                inventario_frame,
+                text=f"{stock_actual:,} unidades",
+                font=('Segoe UI', 12, 'bold'),
+                bootstyle=stock_color,
+                anchor='w'
+            ).grid(row=0, column=1, sticky='w', padx=(0, 10), pady=8)
+            
+            if stock_actual <= 5:
+                tb.Label(
+                    inventario_frame,
+                    text="⚠️ Stock bajo - Requiere reabastecimiento",
+                    font=('Segoe UI', 9),
+                    bootstyle="danger"
+                ).grid(row=1, column=0, columnspan=2, pady=(0, 5))
+            
+            inventario_frame.columnconfigure(0, minsize=150)
+            inventario_frame.columnconfigure(1, weight=1)
+            
+            # Botón cerrar
+            tb.Button(
+                content_frame,
+                text="✓ Cerrar",
+                command=dialog.destroy,
+                bootstyle="primary",
+                width=20
+            ).pack(pady=(15, 0))
+            
+            # Centrar y mostrar
+            self.centrar_ventana(dialog)
+            dialog.deiconify()
             
         except Exception as e:
-            pass
-    
-    def ocultar_tooltip_sku(self, event):
-        """Oculta el tooltip del SKU"""
-        if self.tooltip_sku:
-            self.tooltip_sku.hidetip()
-            self.tooltip_sku = None
+            messagebox.showerror("Error", f"Error al mostrar detalles: {str(e)}")
     
     def desactivar_producto(self):
         """Marca un producto como inactivo"""
@@ -3720,7 +4970,7 @@ class MainWindow:
                     messagebox.showinfo("Éxito", mensaje)
                     self.refresh_productos()
                     self.refresh_alertas()  # Actualizar alertas para quitar productos inactivos
-                    self.limpiar_formulario_producto()
+                    self.limpiar_formulario_producto_tab()
                 else:
                     messagebox.showerror("Error", mensaje)
         except Exception as e:
@@ -3759,7 +5009,7 @@ class MainWindow:
                 messagebox.showinfo("Éxito", mensaje)
                 self.refresh_productos()
                 self.refresh_alertas()  # Actualizar alertas para mostrar productos activos
-                self.limpiar_formulario_producto()
+                self.limpiar_formulario_producto_tab()
             else:
                 messagebox.showerror("Error", mensaje)
         except Exception as e:
@@ -3855,8 +5105,8 @@ class MainWindow:
         
         self.proveedores_tree.pack(fill='both', expand=True)
         
-        # Evento de selección
-        self.proveedores_tree.bind('<<TreeviewSelect>>', self.on_proveedor_select)
+        # Evento de doble clic para editar
+        self.proveedores_tree.bind('<Double-Button-1>', self.on_proveedor_select)
         
         # Alternancia de colores
         self.proveedores_tree.tag_configure('evenrow', background='#f0f0f0')
@@ -3951,8 +5201,8 @@ class MainWindow:
         
         self.clientes_tree.pack(fill='both', expand=True)
         
-        # Evento de selección
-        self.clientes_tree.bind('<<TreeviewSelect>>', self.on_cliente_select)
+        # Evento de doble clic para editar
+        self.clientes_tree.bind('<Double-Button-1>', self.on_cliente_select)
         
         # Alternancia de colores
         self.clientes_tree.tag_configure('evenrow', background='#f0f0f0')
@@ -4142,179 +5392,28 @@ class MainWindow:
     
     # MÉTODOS DE ACTUALIZACIÓN DE DATOS
     def refresh_productos(self):
-        """Actualiza la lista de productos"""
-        # Limpiar el treeview
-        for item in self.productos_tree.get_children():
-            self.productos_tree.delete(item)
-        
-        # Cargar productos según filtro seleccionado
-        filtro = self.producto_filtro.get() if hasattr(self, 'producto_filtro') else 'todos'
-        
-        if filtro == 'activos':
-            productos = self.controller.obtener_productos_activos()
-        elif filtro == 'inactivos':
-            productos = self.controller.obtener_productos_inactivos()
-        else:  # todos
-            productos = self.controller.obtener_productos()
-        
-        # Filtrar por búsqueda si existe
-        if hasattr(self, 'producto_search'):
-            busqueda = self.producto_search.get().lower()
-            if busqueda:
-                productos = [p for p in productos if busqueda in p['nombre'].lower()]
-        
-        for i, producto in enumerate(productos):
-            # Determinar tag para colores alternados y stock bajo
-            tags = []
-            activo = producto.get('activo', 1)
-            
-            # Prioridad: inactivo > stock bajo > alternado
-            if activo == 0:
-                tags = ['inactivo']
-            elif producto['stock_actual'] <= 5:
-                tags = ['lowstock']
-            else:
-                if i % 2 == 0:
-                    tags.append('evenrow')
-                else:
-                    tags.append('oddrow')
-            
-            # Calcular monto de ganancia si no existe
-            monto_ganancia = producto.get('monto_ganancia', 0)
-            if monto_ganancia == 0 or monto_ganancia is None:
-                monto_ganancia = round(producto['precio_venta'] - producto['precio_compra'], 2)
-            
-            # Determinar texto del estado
-            estado_texto = "ACTIVO" if activo == 1 else "INACTIVO"
-            
-            self.productos_tree.insert('', 'end', values=(
-                producto['id'],
-                producto.get('codigo', ''),
-                producto['nombre'],
-                producto.get('categoria', ''),
-                producto.get('marca', ''),
-                producto.get('color', ''),
-                producto.get('tamaño', ''),
-                f"Q {producto['precio_compra']:,.2f}",
-                f"{producto['porcentaje_ganancia']:.2f}%",
-                f"Q {monto_ganancia:,.2f}",
-                f"Q {producto['precio_venta']:,.2f}",
-                f"{producto['stock_actual']:,}",
-                estado_texto
-            ), tags=tags)
+        """Actualiza la lista de productos - Delegado al tab refactorizado"""
+        if hasattr(self, 'productos_tab'):
+            self.productos_tab.refresh()
     
     def refresh_compras(self):
-        """Actualiza la lista de compras"""
-        from datetime import datetime
-        # Limpiar el treeview
-        for item in self.compras_tree.get_children():
-            self.compras_tree.delete(item)
-        
-        # Cargar compras
-        compras = self.controller.obtener_compras()
-        for i, compra in enumerate(compras):
-            # Formatear fecha a dd/mm/yyyy (sin hora)
-            fecha_str = compra['fecha']
-            try:
-                fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d %H:%M:%S')
-                fecha_formateada = fecha_obj.strftime('%d/%m/%Y')
-            except:
-                try:
-                    fecha_obj = datetime.strptime(fecha_str, '%d/%m/%Y %H:%M:%S')
-                    fecha_formateada = fecha_obj.strftime('%d/%m/%Y')
-                except:
-                    fecha_formateada = fecha_str.split()[0] if ' ' in fecha_str else fecha_str
-            
-            # Determinar tag de color basado en vencimiento
-            tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-            vencimiento_texto = "No perecedero"
-            
-            if compra.get('es_perecedero', 0) == 1 and compra.get('fecha_vencimiento'):
-                fecha_venc = compra['fecha_vencimiento']
-                vencimiento_texto = fecha_venc
-                
-                try:
-                    # Calcular días restantes
-                    fecha_venc_obj = datetime.strptime(fecha_venc, '%d/%m/%Y')
-                    hoy = datetime.now()
-                    dias_restantes = (fecha_venc_obj - hoy).days
-                    
-                    # Aplicar color según días restantes
-                    if dias_restantes < 0:
-                        tag = 'vencido'  # Rojo fuerte
-                        vencimiento_texto = f"{fecha_venc} ⚠️ VENCIDO"
-                    elif dias_restantes <= 7:
-                        tag = 'critico'  # Naranja
-                        vencimiento_texto = f"{fecha_venc} ({dias_restantes}d)"
-                    elif dias_restantes <= 30:
-                        tag = 'advertencia'  # Amarillo
-                        vencimiento_texto = f"{fecha_venc} ({dias_restantes}d)"
-                except:
-                    pass  # Si hay error, usar tag por defecto
-            
-            self.compras_tree.insert('', 'end', values=(
-                compra['id'],
-                compra.get('proveedor_nombre', '[Sin Proveedor]'),
-                compra.get('no_documento', ''),
-                compra['producto_nombre'],
-                f"{compra['cantidad']:,}",
-                f"Q {compra['precio_unitario']:,.2f}",
-                f"Q {compra['total']:,.2f}",
-                fecha_formateada,
-                vencimiento_texto
-            ), tags=(tag,))
+        """Actualiza la lista de compras - Delegado al tab refactorizado"""
+        if hasattr(self, 'compras_tab'):
+            self.compras_tab.refresh()
     
     def refresh_ventas(self):
-        """Actualiza la lista de ventas"""
-        from datetime import datetime
-        # Limpiar el treeview
-        for item in self.ventas_tree.get_children():
-            self.ventas_tree.delete(item)
-        
-        # Cargar ventas
-        ventas = self.controller.obtener_ventas()
-        for i, venta in enumerate(ventas):
-            tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-            # Formatear fecha a dd/mm/yyyy (sin hora)
-            fecha_str = venta['fecha']
-            try:
-                fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d %H:%M:%S')
-                fecha_formateada = fecha_obj.strftime('%d/%m/%Y')
-            except:
-                try:
-                    fecha_obj = datetime.strptime(fecha_str, '%d/%m/%Y %H:%M:%S')
-                    fecha_formateada = fecha_obj.strftime('%d/%m/%Y')
-                except:
-                    fecha_formateada = fecha_str.split()[0] if ' ' in fecha_str else fecha_str
-            
-            self.ventas_tree.insert('', 'end', values=(
-                venta.get('referencia_no', venta['id']),
-                venta.get('cliente_nombre', '[Sin Cliente]'),
-                venta.get('producto_codigo', ''),
-                venta['producto_nombre'],
-                f"{venta['cantidad']:,}",
-                f"Q {venta['precio_unitario']:,.2f}",
-                f"Q {venta['total']:,.2f}",
-                fecha_formateada
-            ), tags=(tag,))
+        """Actualiza la lista de ventas - Delegado al tab refactorizado"""
+        if hasattr(self, 'ventas_tab'):
+            self.ventas_tab.refresh()
     
     def refresh_combos(self):
         """Actualiza los combos (YA NO SE USA - ahora usa búsqueda)"""
         pass
     
     def actualizar_resumen(self):
-        """Actualiza el resumen financiero"""
-        resumen = self.controller.obtener_resumen_inventario()
-        
-        # Actualizar tarjetas con formato mejorado
-        self.total_compras_label.config(text=f"Q {resumen['total_compras']:,.2f}")
-        self.total_ventas_label.config(text=f"Q {resumen['total_ventas']:,.2f}")
-        self.ganancia_label.config(text=f"Q {resumen['ganancia_bruta']:,.2f}")
-        self.valor_inventario_label.config(text=f"Q {resumen['valor_inventario']:,.2f}")
-        self.saldo_banco_label.config(text=f"Q {resumen['saldo_banco']:,.2f}")
-        
-        # Actualizar productos con stock bajo
-        self.refresh_stock_bajo()
+        """Actualiza el resumen financiero - Delegado al tab de Reportes"""
+        if hasattr(self, 'reportes_tab'):
+            self.reportes_tab.actualizar_metricas()
     
     def ir_a_reportes(self):
         """Navega a la pestaña de Reportes y actualiza los datos"""
@@ -4322,6 +5421,99 @@ class MainWindow:
         self.actualizar_resumen()
         # Cambiar a la pestaña de Reportes (índice 6)
         self.notebook.select(6)
+    
+    def salir_sistema(self):
+        """Cierra la aplicación con confirmación"""
+        # Crear diálogo personalizado con icono
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Salir del Sistema")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        
+        # Ocultar ventana temporalmente
+        dialog.withdraw()
+        
+        dialog.grab_set()
+        self.agregar_icono(dialog)
+        
+        # Centrar diálogo
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (200 // 2)
+        dialog.geometry(f'400x200+{x}+{y}')
+        
+        # Mostrar ventana ya centrada
+        dialog.deiconify()
+        
+        resultado = {'salir': False}
+        
+        # Frame principal
+        frame = tb.Frame(dialog, padding=20)
+        frame.pack(fill='both', expand=True)
+        
+        # Icono y mensaje
+        mensaje_frame = tb.Frame(frame)
+        mensaje_frame.pack(pady=(10, 20))
+        
+        # Icono de advertencia
+        tb.Label(
+            mensaje_frame,
+            text="⚠️",
+            font=('Segoe UI', 40)
+        ).pack(side='left', padx=(0, 15))
+        
+        # Texto
+        text_frame = tb.Frame(mensaje_frame)
+        text_frame.pack(side='left')
+        
+        tb.Label(
+            text_frame,
+            text="¿Estás seguro que deseas cerrar la aplicación?",
+            font=('Segoe UI', 10, 'bold'),
+            wraplength=250
+        ).pack(anchor='w')
+        
+        tb.Label(
+            text_frame,
+            text="Todos los datos están guardados.",
+            font=('Segoe UI', 9),
+            foreground='gray'
+        ).pack(anchor='w', pady=(5, 0))
+        
+        # Botones
+        btn_frame = tb.Frame(frame)
+        btn_frame.pack(pady=(10, 0))
+        
+        def confirmar_salir():
+            resultado['salir'] = True
+            dialog.destroy()
+        
+        def cancelar():
+            dialog.destroy()
+        
+        tb.Button(
+            btn_frame,
+            text="Sí, Salir",
+            command=confirmar_salir,
+            bootstyle="danger",
+            width=12
+        ).pack(side='left', padx=5)
+        
+        tb.Button(
+            btn_frame,
+            text="Cancelar",
+            command=cancelar,
+            bootstyle="secondary",
+            width=12
+        ).pack(side='left', padx=5)
+        
+        # Esperar a que se cierre el diálogo
+        dialog.wait_window()
+        
+        # Si confirmó, cerrar la aplicación
+        if resultado['salir']:
+            self.root.quit()
     
     def refresh_stock_bajo(self):
         """Actualiza la lista de alertas: stock bajo y productos próximos a vencer"""
@@ -4424,60 +5616,14 @@ class MainWindow:
                 continue
     
     def refresh_proveedores(self):
-        """Actualiza la lista de proveedores"""
-        from datetime import datetime
-        # Limpiar el treeview
-        for item in self.proveedores_tree.get_children():
-            self.proveedores_tree.delete(item)
-        
-        # Cargar proveedores
-        proveedores = self.controller.obtener_proveedores()
-        for i, prov in enumerate(proveedores):
-            tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-            # Formatear fecha a dd/mm/yyyy
-            fecha_str = prov['fecha_registro']
-            try:
-                fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d %H:%M:%S')
-                fecha_formateada = fecha_obj.strftime('%d/%m/%Y')
-            except:
-                fecha_formateada = fecha_str.split()[0] if ' ' in fecha_str else fecha_str
-            
-            self.proveedores_tree.insert('', 'end', values=(
-                prov['id'],
-                prov['nombre'],
-                prov['nit_dpi'],
-                prov['direccion'],
-                prov['telefono'],
-                fecha_formateada
-            ), tags=(tag,))
+        """Actualiza la lista de proveedores - Delegado al tab refactorizado"""
+        if hasattr(self, 'proveedores_tab'):
+            self.proveedores_tab.refresh()
     
     def refresh_clientes(self):
-        """Actualiza la lista de clientes"""
-        from datetime import datetime
-        # Limpiar el treeview
-        for item in self.clientes_tree.get_children():
-            self.clientes_tree.delete(item)
-        
-        # Cargar clientes
-        clientes = self.controller.obtener_clientes()
-        for i, cli in enumerate(clientes):
-            tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-            # Formatear fecha a dd/mm/yyyy
-            fecha_str = cli['fecha_registro']
-            try:
-                fecha_obj = datetime.strptime(fecha_str, '%Y-%m-%d %H:%M:%S')
-                fecha_formateada = fecha_obj.strftime('%d/%m/%Y')
-            except:
-                fecha_formateada = fecha_str.split()[0] if ' ' in fecha_str else fecha_str
-            
-            self.clientes_tree.insert('', 'end', values=(
-                cli['id'],
-                cli['nombre'],
-                cli['nit_dpi'],
-                cli['direccion'],
-                cli['telefono'],
-                fecha_formateada
-            ), tags=(tag,))
+        """Actualiza la lista de clientes - Delegado al tab refactorizado"""
+        if hasattr(self, 'clientes_tab'):
+            self.clientes_tab.refresh()
     
     # MÉTODOS DE CAJA
     def actualizar_categorias_caja(self, event=None):
@@ -4630,8 +5776,9 @@ class MainWindow:
         # Crear ventana de detalles
         detalle_window = tk.Toplevel(self.root)
         detalle_window.title("Detalles del Movimiento")
-        detalle_window.geometry("500x400")
+        detalle_window.geometry("650x500")
         detalle_window.transient(self.root)
+        detalle_window.resizable(False, False)
         
         # Ocultar ventana temporalmente para evitar parpadeo
         detalle_window.withdraw()
@@ -4639,17 +5786,26 @@ class MainWindow:
         detalle_window.grab_set()
         self.agregar_icono(detalle_window)
         
-        # Centrar ventana
-        detalle_window.update_idletasks()
-        x = (detalle_window.winfo_screenwidth() // 2) - (500 // 2)
-        y = (detalle_window.winfo_screenheight() // 2) - (400 // 2)
-        detalle_window.geometry(f'500x400+{x}+{y}')
+        # Frame para canvas y scrollbars (contenido)
+        container = tb.Frame(detalle_window)
+        container.pack(fill='both', expand=True, padx=0, pady=0)
         
-        # Mostrar ventana ya centrada
-        detalle_window.deiconify()
+        # Canvas con scrollbar horizontal solamente
+        canvas = tk.Canvas(container, highlightthickness=0)
+        scrollbar_x = tb.Scrollbar(container, orient="horizontal", command=canvas.xview, bootstyle="primary-round")
         
-        # Frame principal
-        main_frame = tb.Frame(detalle_window, padding=20)
+        scrollable_frame = tb.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(xscrollcommand=scrollbar_x.set)
+        
+        # Frame principal (dentro del scroll)
+        main_frame = tb.Frame(scrollable_frame, padding=20)
         main_frame.pack(fill='both', expand=True)
         
         # Título
@@ -4658,11 +5814,11 @@ class MainWindow:
             text="📋 Detalles del Movimiento de Caja",
             font=('Segoe UI', 14, 'bold'),
             bootstyle="primary"
-        ).pack(pady=(0, 20))
+        ).pack(pady=(0, 15))
         
         # Información del movimiento
         info_frame = tb.Frame(main_frame)
-        info_frame.pack(fill='both', expand=True)
+        info_frame.pack(fill='both', expand=True, padx=10)
         
         campos = [
             ("ID:", valores[0]),
@@ -4682,58 +5838,89 @@ class MainWindow:
                 text=label,
                 font=('Segoe UI', 11, 'bold'),
                 bootstyle="secondary"
-            ).grid(row=i, column=0, sticky='w', pady=8, padx=5)
+            ).grid(row=i, column=0, sticky='w', pady=6, padx=5)
             
-            # Valor
-            valor_label = tb.Label(
-                info_frame,
-                text=str(valor),
-                font=('Segoe UI', 11),
-                bootstyle="primary" if label in ["Monto:", "Saldo Nuevo:"] else "dark"
-            )
-            valor_label.grid(row=i, column=1, sticky='w', pady=8, padx=20)
+            # Valor - Si es concepto y es largo, usar Text widget con scroll
+            if label == "Concepto:" and len(str(valor)) > 60:
+                text_widget = tk.Text(
+                    info_frame,
+                    height=3,
+                    width=50,
+                    wrap='word',
+                    font=('Segoe UI', 10),
+                    relief='solid',
+                    borderwidth=1
+                )
+                text_widget.insert('1.0', str(valor))
+                text_widget.configure(state='disabled')
+                text_widget.grid(row=i, column=1, sticky='ew', pady=6, padx=10)
+                
+                # Scrollbar para el concepto
+                text_scroll = tb.Scrollbar(info_frame, orient='vertical', command=text_widget.yview, bootstyle="secondary-round")
+                text_widget.configure(yscrollcommand=text_scroll.set)
+                text_scroll.grid(row=i, column=2, sticky='ns', pady=6)
+            else:
+                # Valor normal
+                valor_label = tb.Label(
+                    info_frame,
+                    text=str(valor),
+                    font=('Segoe UI', 11),
+                    bootstyle="primary" if label in ["Monto:", "Saldo Nuevo:"] else "dark"
+                )
+                valor_label.grid(row=i, column=1, sticky='w', pady=6, padx=10, columnspan=2)
         
-        # Botón cerrar
+        # Configurar peso de las columnas
+        info_frame.columnconfigure(1, weight=1)
+        
+        # Empaquetar canvas y scrollbar
+        canvas.grid(row=0, column=0, sticky='nsew')
+        scrollbar_x.grid(row=1, column=0, sticky='ew')
+        
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+        
+        # Separador visual
+        tb.Separator(detalle_window, bootstyle="secondary").pack(fill='x')
+        
+        # Frame para botón fijo en la parte inferior (FUERA del scroll)
+        btn_frame = tb.Frame(detalle_window, padding=10)
+        btn_frame.pack(fill='x', side='bottom')
+        
         tb.Button(
-            main_frame,
+            btn_frame,
             text="✓ Cerrar",
             command=detalle_window.destroy,
             bootstyle="secondary",
-            width=20
-        ).pack(pady=20)
+            width=25
+        ).pack()
+        
+        # Habilitar scroll con rueda del mouse (para scroll horizontal con shift+rueda)
+        def _on_mousewheel(event):
+            canvas.xview_scroll(int(-1*(event.delta/120)), "units")
+        
+        def _on_enter(event):
+            canvas.bind_all("<Shift-MouseWheel>", _on_mousewheel)
+        
+        def _on_leave(event):
+            canvas.unbind_all("<Shift-MouseWheel>")
+        
+        canvas.bind("<Enter>", _on_enter)
+        canvas.bind("<Leave>", _on_leave)
+        detalle_window.bind("<Destroy>", lambda e: canvas.unbind_all("<Shift-MouseWheel>") if canvas.winfo_exists() else None)
+        
+        # Centrar ventana después de crear todo el contenido
+        detalle_window.update_idletasks()
+        x = (detalle_window.winfo_screenwidth() // 2) - (650 // 2)
+        y = (detalle_window.winfo_screenheight() // 2) - (500 // 2)
+        detalle_window.geometry(f'650x500+{x}+{y}')
+        
+        # Mostrar ventana ya centrada
+        detalle_window.deiconify()
     
     def refresh_caja(self):
-        """Actualiza los datos de caja con filtro de búsqueda"""
-        from datetime import datetime
-        
-        # Obtener saldo actual
-        saldo = self.controller.obtener_saldo_caja()
-        self.saldo_label.config(text=f"Q {saldo:,.2f}")
-        
-        # Cambiar color del saldo según si es positivo o negativo
-        if saldo < 0:
-            self.saldo_label.config(bootstyle="danger")  # Rojo para saldo negativo
-        else:
-            self.saldo_label.config(bootstyle="success")  # Verde para saldo positivo
-        
-        # Obtener movimientos
-        movimientos = self.controller.obtener_movimientos_caja()
-        
-        # Aplicar filtro de búsqueda si existe
-        if hasattr(self, 'caja_busqueda'):
-            busqueda = self.caja_busqueda.get().lower()
-            if busqueda:
-                movimientos = [m for m in movimientos if 
-                              busqueda in m['concepto'].lower() or 
-                              busqueda in m['categoria'].lower() or
-                              busqueda in m['tipo'].lower()]
-        
-        self.cargar_movimientos_caja(movimientos)
-        
-        # Obtener resumen
-        resumen = self.controller.obtener_resumen_caja()
-        self.ingresos_label.config(text=f"↑ Ingresos: Q {resumen['total_ingresos']:,.2f}")
-        self.egresos_label.config(text=f"↓ Egresos: Q {resumen['total_egresos']:,.2f}")
+        """Actualiza los datos de caja - Delegado al tab refactorizado"""
+        if hasattr(self, 'caja_tab'):
+            self.caja_tab.refresh()
     
     def cargar_movimientos_caja(self, movimientos):
         """Carga los movimientos en la tabla"""
@@ -4850,8 +6037,12 @@ class MainWindow:
             if tab_index in tab_map:
                 tab_name, refresh_method = tab_map[tab_index]
                 
-                # Solo cargar si NO ha sido cargada antes
-                if not self.tabs_loaded.get(tab_name, False):
+                # Siempre refrescar la pestaña de caja (puede tener cambios desde compras/ventas)
+                if tab_name == 'caja':
+                    refresh_method()
+                    self.tabs_loaded[tab_name] = True
+                # Solo cargar si NO ha sido cargada antes para otras pestañas
+                elif not self.tabs_loaded.get(tab_name, False):
                     refresh_method()
                     self.tabs_loaded[tab_name] = True
                     
@@ -5074,33 +6265,24 @@ class MainWindow:
                 import pandas as pd
                 from datetime import datetime
                 
-                # Obtener datos de resumen
-                total_compras = sum(c['total'] for c in self.controller.obtener_compras())
-                total_ventas = sum(v['total'] for v in self.controller.obtener_ventas())
-                ganancia = total_ventas - total_compras
-                
-                # Calcular valor del inventario
-                productos = self.controller.obtener_productos()
-                valor_inventario = sum(p['precio_compra'] * p['stock_actual'] for p in productos)
-                
-                # Obtener saldo de caja
-                movimientos = self.controller.obtener_movimientos_caja()
-                saldo_caja = sum(m['monto'] if m['tipo'] == 'ingreso' else -m['monto'] for m in movimientos)
+                # Obtener resumen completo del inventario (ahora con cálculos correctos)
+                resumen = self.controller.obtener_resumen_inventario()
                 
                 # Crear DataFrame de resumen
                 resumen_data = {
-                    'Concepto': ['Total Compras', 'Total Ventas', 'Ganancia Bruta', 'Valor Inventario', 'Saldo en Caja'],
+                    'Concepto': ['Total Compras', 'Total Ventas', 'Ganancia Bruta', 'Valor Inventario', 'Saldo en Banco'],
                     'Monto (Q)': [
-                        f"Q {total_compras:,.2f}",
-                        f"Q {total_ventas:,.2f}",
-                        f"Q {ganancia:,.2f}",
-                        f"Q {valor_inventario:,.2f}",
-                        f"Q {saldo_caja:,.2f}"
+                        f"Q {resumen['total_compras']:,.2f}",
+                        f"Q {resumen['total_ventas']:,.2f}",
+                        f"Q {resumen['ganancia_bruta']:,.2f}",
+                        f"Q {resumen['valor_inventario']:,.2f}",
+                        f"Q {resumen['saldo_banco']:,.2f}"
                     ]
                 }
                 df_resumen = pd.DataFrame(resumen_data)
                 
                 # Productos con stock bajo (solo activos)
+                productos = self.controller.obtener_productos()
                 productos_bajo = [p for p in productos if p['stock_actual'] <= 5 and p.get('activo', 1) == 1]
                 if productos_bajo:
                     # Agregar columna de estado
@@ -5119,6 +6301,71 @@ class MainWindow:
                 messagebox.showerror("Error", "Se requiere instalar 'pandas' y 'openpyxl' para exportar a Excel.\nEjecute: pip install pandas openpyxl")
             except Exception as e:
                 messagebox.showerror("Error", f"No se pudo exportar el reporte: {str(e)}")
+    
+    def exportar_productos_completo(self):
+        """Exporta todos los productos con todos sus detalles a Excel"""
+        from datetime import datetime
+        fecha_actual = datetime.now().strftime("%Y-%m-%d")
+        
+        archivo = filedialog.asksaveasfilename(
+            title="Exportar Productos Completo",
+            defaultextension=".xlsx",
+            initialfile=f"Productos_Completo_{fecha_actual}.xlsx",
+            filetypes=[("Archivo Excel", "*.xlsx"), ("Todos los archivos", "*.*")]
+        )
+        
+        if archivo:
+            try:
+                import pandas as pd
+                
+                # Obtener todos los productos
+                productos = self.controller.obtener_productos()
+                
+                if not productos:
+                    messagebox.showwarning("Aviso", "No hay productos registrados para exportar.")
+                    return
+                
+                # Preparar datos para exportar
+                datos_exportar = []
+                for p in productos:
+                    datos_exportar.append({
+                        'ID': p.get('id', ''),
+                        'Código SKU': p.get('codigo', ''),
+                        'Nombre': p.get('nombre', ''),
+                        'Categoría': p.get('categoria', ''),
+                        'Marca': p.get('marca', ''),
+                        'Color': p.get('color', ''),
+                        'Tamaño': p.get('tamaño', ''),
+                        'Dibujo': p.get('dibujo', ''),
+                        'Código Color': p.get('cod_color', ''),
+                        'Stock Actual': p.get('stock_actual', 0),
+                        'Precio Compra (Q)': f"{p.get('precio_compra', 0):.2f}",
+                        'Precio Venta (Q)': f"{p.get('precio_venta', 0):.2f}",
+                        '% Ganancia': f"{p.get('porcentaje_ganancia', 0):.2f}",
+                        'Estado': 'ACTIVO' if p.get('activo', 1) == 1 else 'INACTIVO'
+                    })
+                
+                # Crear DataFrame
+                df = pd.DataFrame(datos_exportar)
+                
+                # Exportar a Excel
+                with pd.ExcelWriter(archivo, engine='openpyxl') as writer:
+                    df.to_excel(writer, sheet_name='Productos', index=False)
+                    
+                    # Ajustar ancho de columnas
+                    worksheet = writer.sheets['Productos']
+                    for idx, col in enumerate(df.columns, 1):
+                        max_length = max(
+                            df[col].astype(str).apply(len).max(),
+                            len(col)
+                        )
+                        worksheet.column_dimensions[chr(64 + idx)].width = min(max_length + 2, 50)
+                
+                messagebox.showinfo("Éxito", f"Productos exportados exitosamente a:\n{archivo}\n\nTotal de productos: {len(productos)}")
+            except ImportError:
+                messagebox.showerror("Error", "Se requiere instalar 'pandas' y 'openpyxl' para exportar a Excel.\nEjecute: pip install pandas openpyxl")
+            except Exception as e:
+                messagebox.showerror("Error", f"No se pudo exportar los productos: {str(e)}")
     
     def exportar_reporte_compras(self):
         """Exporta todas las compras a Excel con filtro de fechas"""
@@ -5158,7 +6405,16 @@ class MainWindow:
                 compras_filtradas = []
                 for compra in compras:
                     try:
-                        fecha_compra = dt.strptime(compra['fecha_compra'], '%Y-%m-%d')
+                        # Intentar varios formatos de fecha
+                        fecha_str = compra['fecha']
+                        try:
+                            fecha_compra = dt.strptime(fecha_str, '%d/%m/%Y %H:%M:%S')
+                        except:
+                            try:
+                                fecha_compra = dt.strptime(fecha_str, '%Y-%m-%d %H:%M:%S')
+                            except:
+                                fecha_compra = dt.strptime(fecha_str.split()[0], '%d/%m/%Y')
+                        
                         if fecha_inicio <= fecha_compra <= fecha_fin:
                             compras_filtradas.append(compra)
                     except:
@@ -5194,9 +6450,21 @@ class MainWindow:
                         except:
                             estado_vencimiento = 'Error en fecha'
                     
+                    # Formatear fecha para mostrar
+                    fecha_mostrar = compra['fecha']
+                    try:
+                        fecha_obj = dt.strptime(compra['fecha'], '%d/%m/%Y %H:%M:%S')
+                        fecha_mostrar = fecha_obj.strftime('%d/%m/%Y')
+                    except:
+                        try:
+                            fecha_obj = dt.strptime(compra['fecha'], '%Y-%m-%d %H:%M:%S')
+                            fecha_mostrar = fecha_obj.strftime('%d/%m/%Y')
+                        except:
+                            fecha_mostrar = compra['fecha'].split()[0] if ' ' in compra['fecha'] else compra['fecha']
+                    
                     datos.append({
                         'ID': compra['id'],
-                        'Fecha': compra['fecha_compra'],
+                        'Fecha': fecha_mostrar,
                         'Producto': compra.get('producto_nombre', 'N/A'),
                         'Proveedor': compra.get('proveedor_nombre', 'N/A'),
                         'Cantidad': compra['cantidad'],
@@ -5258,7 +6526,16 @@ class MainWindow:
                 ventas_filtradas = []
                 for venta in ventas:
                     try:
-                        fecha_venta = dt.strptime(venta['fecha_venta'], '%Y-%m-%d')
+                        # Intentar varios formatos de fecha
+                        fecha_str = venta['fecha']
+                        try:
+                            fecha_venta = dt.strptime(fecha_str, '%d/%m/%Y %H:%M:%S')
+                        except:
+                            try:
+                                fecha_venta = dt.strptime(fecha_str, '%Y-%m-%d %H:%M:%S')
+                            except:
+                                fecha_venta = dt.strptime(fecha_str.split()[0], '%d/%m/%Y')
+                        
                         if fecha_inicio <= fecha_venta <= fecha_fin:
                             ventas_filtradas.append(venta)
                     except:
@@ -5272,9 +6549,21 @@ class MainWindow:
                 datos = []
                 total_general = 0
                 for venta in ventas_filtradas:
+                    # Formatear fecha para mostrar
+                    fecha_mostrar = venta['fecha']
+                    try:
+                        fecha_obj = dt.strptime(venta['fecha'], '%d/%m/%Y %H:%M:%S')
+                        fecha_mostrar = fecha_obj.strftime('%d/%m/%Y')
+                    except:
+                        try:
+                            fecha_obj = dt.strptime(venta['fecha'], '%Y-%m-%d %H:%M:%S')
+                            fecha_mostrar = fecha_obj.strftime('%d/%m/%Y')
+                        except:
+                            fecha_mostrar = venta['fecha'].split()[0] if ' ' in venta['fecha'] else venta['fecha']
+                    
                     datos.append({
                         'ID': venta['id'],
-                        'Fecha': venta['fecha_venta'],
+                        'Fecha': fecha_mostrar,
                         'Producto': venta.get('producto_nombre', 'N/A'),
                         'Cliente': venta.get('cliente_nombre', 'N/A'),
                         'Cantidad': venta['cantidad'],
@@ -5334,7 +6623,16 @@ class MainWindow:
                 movimientos_filtrados = []
                 for mov in movimientos:
                     try:
-                        fecha_mov = dt.strptime(mov['fecha'], '%Y-%m-%d')
+                        # Intentar varios formatos de fecha
+                        fecha_str = mov['fecha']
+                        try:
+                            fecha_mov = dt.strptime(fecha_str, '%d/%m/%Y %H:%M:%S')
+                        except:
+                            try:
+                                fecha_mov = dt.strptime(fecha_str, '%Y-%m-%d %H:%M:%S')
+                            except:
+                                fecha_mov = dt.strptime(fecha_str.split()[0], '%d/%m/%Y')
+                        
                         if fecha_inicio <= fecha_mov <= fecha_fin:
                             movimientos_filtrados.append(mov)
                     except:
@@ -5350,27 +6648,39 @@ class MainWindow:
                 total_egresos = 0
                 
                 for mov in movimientos_filtrados:
+                    # Formatear fecha para mostrar
+                    fecha_mostrar = mov['fecha']
+                    try:
+                        fecha_obj = dt.strptime(mov['fecha'], '%d/%m/%Y %H:%M:%S')
+                        fecha_mostrar = fecha_obj.strftime('%d/%m/%Y')
+                    except:
+                        try:
+                            fecha_obj = dt.strptime(mov['fecha'], '%Y-%m-%d %H:%M:%S')
+                            fecha_mostrar = fecha_obj.strftime('%d/%m/%Y')
+                        except:
+                            fecha_mostrar = mov['fecha'].split()[0] if ' ' in mov['fecha'] else mov['fecha']
+                    
                     datos.append({
                         'ID': mov['id'],
-                        'Fecha': mov['fecha'],
-                        'Tipo': mov['tipo'].capitalize(),
+                        'Fecha': fecha_mostrar,
+                        'Tipo': mov['tipo'],
+                        'Categoría': mov.get('categoria', 'N/A'),
                         'Concepto': mov['concepto'],
-                        'Monto': f"Q {mov['monto']:,.2f}",
-                        'Observaciones': mov.get('observaciones', '')
+                        'Monto': f"Q {mov['monto']:,.2f}"
                     })
                     
-                    if mov['tipo'] == 'ingreso':
+                    if mov['tipo'].upper() == 'INGRESO':
                         total_ingresos += mov['monto']
                     else:
                         total_egresos += mov['monto']
                 
                 df = pd.DataFrame(datos)
                 
-                # Agregar filas de totales
+                # Agregar filas de totales (6 columnas: ID, Fecha, Tipo, Categoría, Concepto, Monto)
                 df.loc[len(df)] = ['', '', '', '', '', '']
-                df.loc[len(df)] = ['', '', '', 'Total Ingresos:', f"Q {total_ingresos:,.2f}", '']
-                df.loc[len(df)] = ['', '', '', 'Total Egresos:', f"Q {total_egresos:,.2f}", '']
-                df.loc[len(df)] = ['', '', '', 'Saldo:', f"Q {(total_ingresos - total_egresos):,.2f}", '']
+                df.loc[len(df)] = ['', '', '', '', 'Total Ingresos:', f"Q {total_ingresos:,.2f}"]
+                df.loc[len(df)] = ['', '', '', '', 'Total Egresos:', f"Q {total_egresos:,.2f}"]
+                df.loc[len(df)] = ['', '', '', '', 'Saldo:', f"Q {(total_ingresos - total_egresos):,.2f}"]
                 
                 df.to_excel(archivo, index=False, sheet_name='Movimientos Caja')
                 

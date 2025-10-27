@@ -46,6 +46,9 @@ dist/
 *.bak
 *.cache
 
+# Archivos obsoletos movidos
+docs_obsoletos/
+
 # Archivos de documentación temporal de Copilot
 ACTUALIZACION_*.md
 ANALISIS_*.md
