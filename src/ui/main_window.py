@@ -62,13 +62,29 @@ from src.ui.tabs.reportes_tab import ReportesTab
 from src.ui.tabs.configuracion_tab import ConfiguracionTab
 
 class MainWindow:
-    def __init__(self):
+    def __init__(self, usuario=None, root=None):
+        # Guardar información del usuario autenticado
+        self.usuario_actual = usuario
+        
         # Cargar el tema guardado
         tema_guardado = Settings.get_theme()
         
-        # Usar ttkbootstrap para un diseño moderno
-        self.root = tb.Window(themename=tema_guardado)
-        self.root.title("Sistema de Control de Inventarios")
+        # Usar la raíz existente o crear una nueva
+        if root is not None:
+            self.root = root
+            self.root.deiconify()  # Mostrar la ventana oculta
+            # Limpiar el contenido anterior
+            for widget in self.root.winfo_children():
+                widget.destroy()
+        else:
+            # Usar ttkbootstrap para un diseño moderno
+            self.root = tb.Window(themename=tema_guardado)
+        
+        # Configurar título con nombre de usuario
+        titulo = "Sistema de Control de Inventarios"
+        if self.usuario_actual:
+            titulo += f" - Usuario: {self.usuario_actual['nombre_completo']}"
+        self.root.title(titulo)
         
         # Ocultar ventana temporalmente para evitar parpadeo al centrar
         self.root.withdraw()

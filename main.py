@@ -23,19 +23,39 @@ import json
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
+    from src.ui.login_window import LoginWindow
     from src.ui.main_window import MainWindow
     
     def main():
         """Función principal de la aplicación"""
         print("Iniciando Sistema de Control de Inventarios...")
-        print("Versión 1.0")
+        print("Versión 2.0")
         print("=" * 50)
         
-        # Crear y ejecutar la aplicación
-        app = MainWindow()
-        app.run()
+        # Mostrar ventana de login
+        login = LoginWindow()
+        usuario_autenticado = login.run()
         
-        print("Aplicación cerrada correctamente.")
+        # Si el usuario se autenticó correctamente, abrir la aplicación principal
+        if usuario_autenticado:
+            print(f"Usuario autenticado: {usuario_autenticado['nombre_completo']}")
+            print("Iniciando aplicación principal...")
+            
+            # Ocultar la ventana de login
+            login.root.withdraw()
+            
+            # Crear y ejecutar la aplicación principal usando la misma raíz
+            app = MainWindow(usuario=usuario_autenticado, root=login.root)
+            app.run()
+            
+            print("Aplicación cerrada correctamente.")
+        else:
+            print("Login cancelado. Aplicación cerrada.")
+            # Cerrar la ventana de login si fue cancelada
+            try:
+                login.root.destroy()
+            except:
+                pass
 
     if __name__ == "__main__":
         main()

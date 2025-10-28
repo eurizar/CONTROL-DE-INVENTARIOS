@@ -177,6 +177,29 @@ class DatabaseManager:
                 )
             ''')
             
+            # Tabla de usuarios
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    usuario TEXT NOT NULL UNIQUE,
+                    contrasena TEXT NOT NULL,
+                    nombre_completo TEXT NOT NULL,
+                    rol TEXT DEFAULT 'usuario',
+                    activo INTEGER DEFAULT 1,
+                    fecha_creacion TEXT DEFAULT CURRENT_TIMESTAMP,
+                    ultimo_acceso TEXT
+                )
+            ''')
+            
+            # Crear usuario por defecto si no existe
+            cursor.execute("SELECT COUNT(*) FROM usuarios WHERE usuario = 'Marteliz'")
+            if cursor.fetchone()[0] == 0:
+                cursor.execute('''
+                    INSERT INTO usuarios (usuario, contrasena, nombre_completo, rol)
+                    VALUES (?, ?, ?, ?)
+                ''', ('Marteliz', 'Admin', 'Administrador', 'admin'))
+                print("Usuario por defecto 'Marteliz' creado exitosamente")
+            
             # Agregar columnas de vencimiento a compras si no existen
             try:
                 cursor.execute('ALTER TABLE compras ADD COLUMN es_perecedero INTEGER DEFAULT 0')
@@ -1103,6 +1126,71 @@ class DatabaseManager:
             'saldo_actual': saldo_actual,
             'diferencia': total_ingresos - total_egresos
         }
+    
+    # ==================== MÉTODOS DE AUTENTICACIÓN ====================
+    
+    def verificar_usuario(self, usuario: str, contrasena: str) -> Optional[Dict]:
+        """
+        Verifica las credenciales del usuario.
+        Retorna los datos del usuario si es válido, None en caso contrario.
+        """
+        query = '''
+            SELECT id, usuario, nombre_completo, rol, activo
+            FROM usuarios 
+            WHERE usuario = ? AND contrasena = ? AND activo = 1
+        '''
+        resultado = self.execute_query(query, (usuario, contrasena))
+        
+        if resultado:
+            # Actualizar último acceso
+            self.actualizar_ultimo_acceso(usuario)
+            return resultado[0]
+        return None
+    
+    def actualizar_ultimo_acceso(self, usuario: str):
+        """Actualiza la fecha y hora del último acceso del usuario"""
+        query = '''
+            UPDATE usuarios 
+            SET ultimo_acceso = CURRENT_TIMESTAMP 
+            WHERE usuario = ?
+        '''
+        self.execute_update(query, (usuario,))
+    
+    def obtener_todos_usuarios(self) -> List[Dict]:
+        """Obtiene todos los usuarios del sistema"""
+        query = 'SELECT id, usuario, nombre_completo, rol, activo, fecha_creacion, ultimo_acceso FROM usuarios'
+        return self.execute_query(query)
+    
+    def crear_usuario(self, usuario: str, contrasena: str, nombre_completo: str, rol: str = 'usuario') -> bool:
+        """Crea un nuevo usuario en el sistema"""
+        query = '''
+            INSERT INTO usuarios (usuario, contrasena, nombre_completo, rol)
+            VALUES (?, ?, ?, ?)
+        '''
+        return self.execute_update(query, (usuario, contrasena, nombre_completo, rol))
+    
+    def actualizar_usuario(self, id_usuario: int, **kwargs) -> bool:
+        """Actualiza los datos de un usuario"""
+        campos_validos = ['usuario', 'contrasena', 'nombre_completo', 'rol', 'activo']
+        campos = []
+        valores = []
+        
+        for campo, valor in kwargs.items():
+            if campo in campos_validos:
+                campos.append(f"{campo} = ?")
+                valores.append(valor)
+        
+        if not campos:
+            return False
+        
+        valores.append(id_usuario)
+        query = f"UPDATE usuarios SET {', '.join(campos)} WHERE id = ?"
+        return self.execute_update(query, tuple(valores))
+    
+    def eliminar_usuario(self, id_usuario: int) -> bool:
+        """Desactiva un usuario (no lo elimina físicamente)"""
+        query = 'UPDATE usuarios SET activo = 0 WHERE id = ?'
+        return self.execute_update(query, (id_usuario,))
     
     def eliminar_movimiento_caja(self, movimiento_id: int) -> bool:
         """Elimina un movimiento de caja por su ID"""
